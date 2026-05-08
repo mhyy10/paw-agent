@@ -20,3 +20,5 @@ __pypackages__/
 *~
 .DS_Store
 Thumbs.db
+dist/
+*.whl

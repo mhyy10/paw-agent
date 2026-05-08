@@ -1,0 +1,58 @@
+{
+  "name": "paw-agent",
+  "version": "0.3.0",
+  "description": "🐾 Paw — 轻量级 AI 智能体框架。CLI + Web UI，插件系统，多会话管理。",
+  "keywords": [
+    "ai",
+    "agent",
+    "chatbot",
+    "llm",
+    "openai",
+    "cli",
+    "web-ui",
+    "tools",
+    "plugin",
+    "assistant",
+    "python"
+  ],
+  "author": "mhyy10",
+  "license": "MIT",
+  "homepage": "https://github.com/mhyy10/paw-agent",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mhyy10/paw-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mhyy10/paw-agent/issues"
+  },
+  "main": "lib/check.js",
+  "bin": {
+    "paw": "bin/paw.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js",
+    "test": "node test/test.js"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "preferGlobal": true,
+  "dependencies": {},
+  "devDependencies": {}
+}
