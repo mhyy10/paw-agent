@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🐾 {{ agent_name }}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <!-- highlight.js 代码高亮 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <!-- marked.js Markdown 渲染 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+</head>
+<body>
+    <div class="app">
+        <!-- 侧边栏 -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">🐾</span>
+                    <div class="logo-info">
+                        <span>{{ agent_name }}</span>
+                        <span class="logo-sub">{{ model }}</span>
+                    </div>
+                </div>
+            </div>
+            <button class="new-chat-btn" onclick="newChat()">
+                <span>+</span> 新对话
+            </button>
+            <!-- 人格选择 -->
+            <div class="persona-selector">
+                <select id="personaSelect" onchange="switchPersona(this.value)">
+                    <option value="default">🐾 通用助手</option>
+                    <option value="coder">💻 编程专家</option>
+                    <option value="teacher">📚 教学模式</option>
+                    <option value="creative">🎨 创意写作</option>
+                    <option value="analyst">📊 数据分析</option>
+                    <option value="translator">🌍 翻译助手</option>
+                </select>
+            </div>
+            <div class="session-list" id="sessionList"></div>
+            <div class="sidebar-footer">
+                Paw v0.2.0 · 轻量级 AI 智能体
+            </div>
+        </aside>
+
+        <!-- 主区域 -->
+        <main class="main">
+            <!-- 消息区域 -->
+            <div class="messages" id="messages">
+                <div class="welcome" id="welcome">
+                    <div class="welcome-icon">🐾</div>
+                    <h2>你好，我是 {{ agent_name }}</h2>
+                    <p>有什么可以帮你的？</p>
+                    <div class="quick-actions">
+                        <button class="quick-btn" onclick="sendQuick('帮我写一个 Python 快速排序')">写代码</button>
+                        <button class="quick-btn" onclick="sendQuick('解释一下什么是 Docker')">解释概念</button>
+                        <button class="quick-btn" onclick="sendQuick('列出当前目录的文件')">查看文件</button>
+                        <button class="quick-btn" onclick="sendQuick('抓取 https://news.ycombinator.com 的头条')">抓取网页</button>
+                        <button class="quick-btn" onclick="sendQuick('用 Python 画一个正弦波图形')">执行代码</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 状态栏 -->
+            <div class="status-bar" id="statusBar"></div>
+
+            <!-- 输入区域 -->
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <textarea
+                        id="userInput"
+                        placeholder="输入消息... (Shift+Enter 换行)"
+                        rows="1"
+                        autofocus
+                    ></textarea>
+                    <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 2L11 13M22 2L15 22L11 13M11 13L2 9L22 2"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // ========== 配置 marked.js ==========
+        marked.setOptions({
+            highlight: function(code, lang) {
+                if (lang && hljs.getLanguage(lang)) {
+                    return hljs.highlight(code, { language: lang }).value;
+                }
+                return hljs.highlightAuto(code).value;
+            },
+            breaks: true,
+            gfm: true,
+        });
+
+        // ========== WebSocket ==========
+        let ws = null;
+        let currentStreamEl = null;
+        let streamContent = '';
+        let toolCallContainer = null;
+
+        function connect() {
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+            ws.onopen = () => {
+                console.log('🐾 Connected');
+            };
+
+            ws.onmessage = (e) => {
+                const msg = JSON.parse(e.data);
+                handleMessage(msg);
+            };
+
+            ws.onclose = () => {
+                console.log('🐾 Disconnected, reconnecting...');
+                setTimeout(connect, 2000);
+            };
+        }
+
+        function handleMessage(msg) {
+            switch (msg.type) {
+                case 'system':
+                    addSystemMessage(msg.content);
+                    break;
+
+                case 'tool_start':
+                    // 创建可折叠的工具调用区域
+                    if (currentStreamEl) {
+                        if (!toolCallContainer) {
+                            toolCallContainer = document.createElement('div');
+                            toolCallContainer.className = 'tool-calls-container';
+                            currentStreamEl.querySelector('.message-content').insertBefore(
+                                toolCallContainer,
+                                currentStreamEl.querySelector('.message-bubble')
+                            );
+                        }
+                        const toolEl = document.createElement('details');
+                        toolEl.className = 'tool-call-item';
+                        toolEl.open = true;
+                        const argsStr = Object.entries(msg.args || {})
+                            .map(([k, v]) => `${k}=${JSON.stringify(v).slice(0, 60)}`)
+                            .join(', ');
+                        toolEl.innerHTML = `
+                            <summary class="tool-call-header">
+                                <span class="tool-icon">🔧</span>
+                                <span class="tool-name">${escapeHtml(msg.name)}</span>
+                                <span class="tool-args">${escapeHtml(argsStr)}</span>
+                                <span class="tool-status running">⏳</span>
+                            </summary>
+                            <div class="tool-call-body">
+                                <div class="tool-result">执行中...</div>
+                            </div>
+                        `;
+                        toolCallContainer.appendChild(toolEl);
+                        // 存储引用以便更新
+                        toolEl._statusEl = toolEl.querySelector('.tool-status');
+                        toolEl._resultEl = toolEl.querySelector('.tool-result');
+                        toolCallContainer._currentTool = toolEl;
+                    }
+                    break;
+
+                case 'tool_result':
+                    if (toolCallContainer && toolCallContainer._currentTool) {
+                        const el = toolCallContainer._currentTool;
+                        el._statusEl.textContent = '✅';
+                        el._statusEl.className = 'tool-status done';
+                        // 格式化结果
+                        let resultText = msg.result || '';
+                        try {
+                            const parsed = JSON.parse(resultText);
+                            resultText = JSON.stringify(parsed, null, 2);
+                        } catch(e) {}
+                        el._resultEl.innerHTML = `<pre><code>${escapeHtml(resultText)}</code></pre>`;
+                        el.open = false; // 自动折叠
+                        hljs.highlightElement(el._resultEl.querySelector('code'));
+                    }
+                    break;
+
+                case 'tool_error':
+                    if (toolCallContainer && toolCallContainer._currentTool) {
+                        const el = toolCallContainer._currentTool;
+                        el._statusEl.textContent = '❌';
+                        el._statusEl.className = 'tool-status error';
+                        el._resultEl.innerHTML = `<span class="error-text">${escapeHtml(msg.error)}</span>`;
+                    }
+                    break;
+
+                case 'round':
+                    if (currentStreamEl) {
+                        const roundEl = document.createElement('div');
+                        roundEl.className = 'round-indicator';
+                        roundEl.textContent = `--- 第 ${msg.number} 轮工具调用 ---`;
+                        currentStreamEl.querySelector('.message-content').insertBefore(
+                            roundEl,
+                            currentStreamEl.querySelector('.message-bubble')
+                        );
+                    }
+                    break;
+
+                case 'stream':
+                    streamContent += msg.content;
+                    if (currentStreamEl) {
+                        const bubble = currentStreamEl.querySelector('.message-bubble');
+                        bubble.innerHTML = renderMarkdown(streamContent);
+                        // 高亮新的代码块
+                        bubble.querySelectorAll('pre code').forEach(block => {
+                            if (!block.dataset.highlighted) {
+                                hljs.highlightElement(block);
+                                block.dataset.highlighted = 'true';
+                            }
+                        });
+                    }
+                    scrollToBottom();
+                    break;
+
+                case 'stream_end':
+                    currentStreamEl = null;
+                    streamContent = '';
+                    toolCallContainer = null;
+                    setStatus('');
+                    enableInput(true);
+                    break;
+
+                case 'command_result':
+                    addAssistantMessage(msg.content);
+                    enableInput(true);
+                    break;
+
+                case 'error':
+                    addSystemMessage('❌ ' + msg.content);
+                    enableInput(true);
+                    break;
+            }
+        }
+
+        // ========== 消息渲染 ==========
+        function addUserMessage(text) {
+            const welcome = document.getElementById('welcome');
+            if (welcome) welcome.style.display = 'none';
+            const el = document.createElement('div');
+            el.className = 'message user';
+            el.innerHTML = `
+                <div class="message-inner">
+                    <div class="avatar">👤</div>
+                    <div class="message-content">
+                        <div class="message-bubble">${escapeHtml(text)}</div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('messages').appendChild(el);
+            scrollToBottom();
+        }
+
+        function addAssistantMessage(text) {
+            const el = document.createElement('div');
+            el.className = 'message assistant';
+            el.innerHTML = `
+                <div class="message-inner">
+                    <div class="avatar">🐾</div>
+                    <div class="message-content">
+                        <div class="message-bubble">${renderMarkdown(text)}</div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('messages').appendChild(el);
+            // 高亮代码
+            el.querySelectorAll('pre code').forEach(block => {
+                hljs.highlightElement(block);
+            });
+            scrollToBottom();
+            return el;
+        }
+
+        function startAssistantStream() {
+            const el = document.createElement('div');
+            el.className = 'message assistant';
+            el.innerHTML = `
+                <div class="message-inner">
+                    <div class="avatar">🐾</div>
+                    <div class="message-content">
+                        <div class="message-bubble"><span class="typing-cursor">▊</span></div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('messages').appendChild(el);
+            currentStreamEl = el;
+            streamContent = '';
+            toolCallContainer = null;
+            scrollToBottom();
+            return el;
+        }
+
+        function addSystemMessage(text) {
+            const el = document.createElement('div');
+            el.className = 'system-message';
+            el.textContent = text;
+            document.getElementById('messages').appendChild(el);
+            scrollToBottom();
+        }
+
+        // ========== 发送消息 ==========
+        function sendMessage() {
+            const input = document.getElementById('userInput');
+            const text = input.value.trim();
+            if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+            addUserMessage(text);
+            input.value = '';
+            autoResize(input);
+            enableInput(false);
+
+            if (text.startsWith('/')) {
+                setStatus('处理命令...');
+            } else {
+                startAssistantStream();
+                setStatus('思考中...');
+            }
+
+            ws.send(JSON.stringify({ type: 'chat', content: text }));
+        }
+
+        function sendQuick(text) {
+            document.getElementById('userInput').value = text;
+            sendMessage();
+        }
+
+        function newChat() {
+            document.getElementById('messages').innerHTML = `
+                <div class="welcome" id="welcome">
+                    <div class="welcome-icon">🐾</div>
+                    <h2>你好，我是 Paw</h2>
+                    <p>有什么可以帮你的？</p>
+                    <div class="quick-actions">
+                        <button class="quick-btn" onclick="sendQuick('帮我写一个 Python 快速排序')">写代码</button>
+                        <button class="quick-btn" onclick="sendQuick('解释一下什么是 Docker')">解释概念</button>
+                        <button class="quick-btn" onclick="sendQuick('列出当前目录的文件')">查看文件</button>
+                        <button class="quick-btn" onclick="sendQuick('抓取 https://news.ycombinator.com 的头条')">抓取网页</button>
+                        <button class="quick-btn" onclick="sendQuick('用 Python 画一个正弦波图形')">执行代码</button>
+                    </div>
+                </div>
+            `;
+            if (ws) ws.close();
+            setTimeout(connect, 500);
+        }
+
+        function switchPersona(persona) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'chat', content: `/persona ${persona}` }));
+            }
+        }
+
+        // ========== 工具函数 ==========
+        function enableInput(enabled) {
+            const input = document.getElementById('userInput');
+            const btn = document.getElementById('sendBtn');
+            input.disabled = !enabled;
+            btn.disabled = !enabled;
+            if (enabled) input.focus();
+        }
+
+        function setStatus(text) {
+            const el = document.getElementById('statusBar');
+            el.textContent = text;
+            el.className = text ? 'status-bar typing' : 'status-bar';
+        }
+
+        function scrollToBottom() {
+            const el = document.getElementById('messages');
+            el.scrollTop = el.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function renderMarkdown(text) {
+            try {
+                return marked.parse(text);
+            } catch (e) {
+                return escapeHtml(text).replace(/\n/g, '<br>');
+            }
+        }
+
+        function autoResize(el) {
+            el.style.height = 'auto';
+            el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+        }
+
+        // ========== 事件绑定 ==========
+        document.getElementById('userInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        document.getElementById('userInput').addEventListener('input', (e) => {
+            autoResize(e.target);
+        });
+
+        // ========== 启动 ==========
+        connect();
+    </script>
+</body>
+</html>
