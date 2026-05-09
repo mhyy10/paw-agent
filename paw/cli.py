@@ -1,4 +1,4 @@
-"""Paw CLI v5 - 纯 ASCII 输出，无 emoji"""
+"""Paw CLI - 纯 ASCII 输出，无 emoji"""
 
 import asyncio
 import sys
@@ -8,7 +8,6 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
@@ -17,8 +16,8 @@ from paw.config import load_config, save_config, update_config, CONFIG_FILE, DEF
 from paw.personas import get_persona, list_personas, PERSONAS
 
 
+# ANSI 样式
 class S:
-    """ANSI 样式 + ASCII 符号"""
     RESET = "\033[0m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
@@ -26,417 +25,416 @@ class S:
     GREEN = "\033[32m"
     RED = "\033[31m"
     YELLOW = "\033[33m"
-    MAGENTA = "\033[35m"
-    BLUE = "\033[34m"
-    WHITE = "\033[97m"
-    GRAY = "\033[90m"
     BOLD_CYAN = "\033[1;36m"
     BOLD_GREEN = "\033[1;32m"
-    DIM_CYAN = "\033[2;36m"
-
-    # ASCII 符号
-    PAW = ">>"
-    CHECK = "[OK]"
-    CROSS = "[X]"
-    WARN = "[!]"
-    WRENCH = "[tool]"
-    FOLDER = "[dir]"
-    FILE = "[file]"
-    CHART = "[#]"
-    TRASH = "[del]"
-    PLUG = "[plug]"
-    ARROW = ">"
 
 
-# ========== 输出函数 ==========
-
-app = typer.Typer(
-    name="paw",
-    help=f"{S.PAW} Paw - 轻量级 AI 智能体框架",
-    add_completion=False,
-)
-
+# 输出
+app = typer.Typer(name="paw", help=">> Paw - 轻量级 AI 智能体框架", add_completion=False)
 console = Console(force_terminal=True)
 
-
-def _write(text: str):
+def _w(text: str):
     sys.stdout.write(text)
     sys.stdout.flush()
 
-
-def _write_line(text: str = ""):
-    _write(text + "\n")
-
-
-def _print(text: str):
-    console.print(text)
+def _wl(text: str = ""):
+    _w(text + "\n")
 
 
-# ========== 显示函数 ==========
+# ===== 显示 =====
 
-def _print_banner():
-    _print(Panel.fit(
-        f"[bold cyan]{S.PAW} {__app_name__}[/] v{__version__}\n"
-        f"[dim]轻量级 AI 智能体 · Tab 补全 · Ctrl+L 清屏 · /help 帮助[/]",
+def _banner():
+    console.print(Panel.fit(
+        f"[bold cyan]>> {__app_name__}[/] v{__version__}\n"
+        "[dim]轻量级 AI 智能体 - Tab 补全 - /help 帮助[/]",
         border_style="cyan",
     ))
 
-
-def _print_help():
-    _write_line(f"""
+def _help():
+    _wl(f"""
 {S.BOLD_CYAN}聊天命令:{S.RESET}
   {S.CYAN}/help{S.RESET}         显示帮助
   {S.CYAN}/new{S.RESET}          新建会话
   {S.CYAN}/sessions{S.RESET}     查看/切换会话
-  {S.CYAN}/switch <id>{S.RESET}  切换到指定会话
+  {S.CYAN}/switch <id>{S.RESET}  切换会话
   {S.CYAN}/clear{S.RESET}        清空当前会话
   {S.CYAN}/history{S.RESET}      查看历史消息
   {S.CYAN}/export{S.RESET}       导出为 Markdown
 
 {S.BOLD_CYAN}配置命令:{S.RESET}
-  {S.CYAN}/config{S.RESET}       查看当前配置
+  {S.CYAN}/config{S.RESET}       查看配置
   {S.CYAN}/model <名称>{S.RESET} 切换模型
   {S.CYAN}/persona <id>{S.RESET} 切换人格
-  {S.CYAN}/system <提示>{S.RESET} 查看/修改系统提示
-  {S.CYAN}/tools{S.RESET}        列出可用工具
+  {S.CYAN}/system <提示>{S.RESET} 修改系统提示
+  {S.CYAN}/tools{S.RESET}        列出工具
   {S.CYAN}/plugins{S.RESET}      管理插件
-  {S.CYAN}/tokens{S.RESET}       查看 Token 用量
+  {S.CYAN}/tokens{S.RESET}       Token 用量
 
 {S.BOLD_CYAN}快捷键:{S.RESET}
-  {S.CYAN}Tab{S.RESET}           自动补全
-  {S.CYAN}↑/↓{S.RESET}           浏览历史输入
-  {S.CYAN}Ctrl+L{S.RESET}        清屏
-  {S.CYAN}Ctrl+C{S.RESET}        中断/清空输入
-  {S.CYAN}Ctrl+D{S.RESET}        退出 (空输入时)
-
-{S.BOLD}直接输入消息即可与 AI 对话{S.RESET}
+  Tab 补全 | 上下历史 | Ctrl+L 清屏 | Ctrl+C 中断
 """)
 
-
-def _show_sessions(memory, current_session_id: str):
+def _show_sessions(memory, cur_id):
     sessions = memory.get_sessions(limit=20)
     if not sessions:
-        _write_line(f"{S.DIM}暂无历史会话{S.RESET}")
+        _wl(f"{S.DIM}暂无历史会话{S.RESET}")
         return
-
-    table = Table(title="会话列表", show_lines=True, border_style="cyan")
-    table.add_column("", width=3)
-    table.add_column("会话 ID", style="cyan")
-    table.add_column("标题", max_width=40)
-    table.add_column("人格")
-    table.add_column("消息数", justify="right")
-    table.add_column("最后活跃")
-
+    t = Table(title="会话列表", show_lines=True, border_style="cyan")
+    t.add_column("", width=3)
+    t.add_column("ID", style="cyan")
+    t.add_column("标题", max_width=40)
+    t.add_column("人格")
+    t.add_column("消息", justify="right")
+    t.add_column("最后活跃")
     for s in sessions:
         sid = s["session_id"]
-        is_current = S.ARROW if sid == current_session_id else " "
+        arrow = ">" if sid == cur_id else " "
         ts = datetime.fromtimestamp(s["last_active"]).strftime("%m-%d %H:%M")
         title = s.get("title", "") or "(无标题)"
-        persona = s.get("persona", "default")
-        table.add_row(is_current, sid, title, persona, str(s["message_count"]), ts)
-
-    _print(table)
-    _write_line(f"{S.DIM}使用 /switch <会话ID> 切换会话{S.RESET}")
-
+        t.add_row(arrow, sid, title, s.get("persona", ""), str(s["message_count"]), ts)
+    console.print(t)
 
 def _show_personas():
-    table = Table(title="可用人格", show_lines=True, border_style="cyan")
-    table.add_column("ID", style="cyan")
-    table.add_column("表情")
-    table.add_column("名称")
-    table.add_column("描述")
+    t = Table(title="可用人格", show_lines=True, border_style="cyan")
+    t.add_column("ID", style="cyan")
+    t.add_column("名称")
+    t.add_column("描述")
     for p in list_personas():
-        table.add_row(p["key"], "", p["name"], p["description"])
-    _print(table)
-    _write_line(f"{S.DIM}使用 /persona <id> 切换人格{S.RESET}")
+        t.add_row(p["key"], p["name"], p["description"])
+    console.print(t)
+    _wl(f"{S.DIM}/persona <id> 切换{S.RESET}")
 
 
-def _export_session(agent, session_id: str) -> str:
-    messages = agent.memory.get_messages(session_id, limit=200)
-    if not messages:
-        return ""
+# ===== 命令处理 =====
 
-    lines = [f"# {S.PAW} Paw 对话记录\n"]
-    lines.append(f"会话 ID: {session_id}")
-    lines.append(f"导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-    lines.append("---\n")
-
-    role_map = {"user": "用户", "assistant": "Paw", "tool": "工具", "system": "系统"}
-
-    for msg in messages:
-        role = msg.get("role", "unknown")
-        content = msg.get("content", "")
-        tool_name = msg.get("name", "")
-        role_display = role_map.get(role, role)
-
-        if role == "tool" and tool_name:
-            lines.append(f"### 工具: {tool_name}\n")
-            lines.append(f"```\n{content}\n```\n")
-        elif role in ("assistant", "user"):
-            lines.append(f"### {role_display}\n")
-            lines.append(f"{content}\n")
-        else:
-            lines.append(f"**{role_display}:** {content}\n")
-
-    return "\n".join(lines)
-
-
-def _load_plugins(config: dict):
-    if not config.get("tools", {}).get("plugins_enabled", True):
-        return {}
-    try:
-        from paw.plugins import load_plugins
-        return load_plugins()
-    except Exception as e:
-        _write_line(f"{S.WARN}插件加载失败: {e}")
-        return {}
-
-
-# ========== 命令处理 ==========
-
-def handle_command(cmd_line: str, agent, session_id: str, config: dict,
-                   paw_input=None) -> tuple:
-    parts = cmd_line.split(maxsplit=1)
+def _cmd(line, agent, sid, config, tui):
+    parts = line.split(maxsplit=1)
     cmd = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
 
     if cmd in ("/quit", "/exit", "/q"):
         raise SystemExit(0)
-
     elif cmd == "/help":
-        _print_help()
-
+        _help()
     elif cmd == "/new":
-        old_id = session_id
-        session_id = str(uuid.uuid4())[:8]
-        agent.session_id = session_id
-        first_msg = agent.memory.get_last_user_message(old_id)
-        if first_msg:
-            agent.memory.set_session_meta(old_id, title=first_msg[:50])
-        _write_line(f"{S.GREEN}{S.CHECK} 新会话: {session_id}{S.RESET} {S.DIM}(旧会话 {old_id} 已保留){S.RESET}")
-        if paw_input:
-            paw_input.update_session_id(session_id)
-
+        old = sid
+        sid = str(uuid.uuid4())[:8]
+        agent.session_id = sid
+        first = agent.memory.get_last_user_message(old)
+        if first:
+            agent.memory.set_session_meta(old, title=first[:50])
+        _wl(f"{S.GREEN}[OK] 新会话: {sid}{S.RESET} {S.DIM}(旧: {old}){S.RESET}")
+        if tui: tui.update_session_id(sid)
     elif cmd == "/sessions":
-        _show_sessions(agent.memory, session_id)
-
+        _show_sessions(agent.memory, sid)
     elif cmd == "/switch":
         if not args:
-            _write_line(f"{S.YELLOW}用法: /switch <会话ID>{S.RESET}")
+            _wl(f"{S.YELLOW}用法: /switch <id>{S.RESET}")
         else:
             target = args.strip()
-            sessions = agent.memory.get_sessions()
-            valid_ids = [s["session_id"] for s in sessions]
-            if target in valid_ids:
-                session_id = target
+            ids = [s["session_id"] for s in agent.memory.get_sessions()]
+            if target in ids:
+                sid = target
                 agent.session_id = target
-                msg_count = len(agent.memory.get_messages(target, limit=999))
-                _write_line(f"{S.GREEN}{S.CHECK} 已切换到会话 {target}{S.RESET} {S.DIM}({msg_count} 条消息){S.RESET}")
-                if paw_input:
-                    paw_input.update_session_id(target)
+                _wl(f"{S.GREEN}[OK] 已切换: {target}{S.RESET}")
+                if tui: tui.update_session_id(target)
             else:
-                _write_line(f"{S.RED}{S.CROSS} 会话 {target} 不存在{S.RESET}")
-
+                _wl(f"{S.RED}[X] 会话 {target} 不存在{S.RESET}")
     elif cmd == "/clear":
-        agent.memory.clear_session(session_id)
-        _write_line(f"{S.YELLOW}{S.TRASH} 会话已清空{S.RESET}")
-
+        agent.memory.clear_session(sid)
+        _wl(f"{S.YELLOW}[del] 已清空{S.RESET}")
     elif cmd == "/history":
-        messages = agent.memory.get_messages(session_id, limit=50)
-        if not messages:
-            _write_line(f"{S.DIM}当前会话无历史消息{S.RESET}")
+        msgs = agent.memory.get_messages(sid, limit=50)
+        if not msgs:
+            _wl(f"{S.DIM}无历史消息{S.RESET}")
         else:
-            table = Table(title=f"会话 {session_id}", show_lines=False, border_style="dim")
-            table.add_column("角色", style="cyan", width=10)
-            table.add_column("内容", max_width=70)
-            for msg in messages:
-                role = msg.get("role", "?")
-                content = msg.get("content", "")
-                if content:
-                    display = content[:100] + "..." if len(content) > 100 else content
-                    table.add_row(role, display.replace("\n", " "))
-            _print(table)
-
+            t = Table(title=f"会话 {sid}", show_lines=False)
+            t.add_column("角色", style="cyan", width=10)
+            t.add_column("内容", max_width=70)
+            for m in msgs:
+                c = m.get("content", "")
+                if c:
+                    t.add_row(m.get("role", "?"), (c[:100]+"...") if len(c)>100 else c)
+            console.print(t)
     elif cmd == "/config":
         import json
         safe = dict(config)
-        if safe.get("llm", {}).get("api_key"):
-            key = safe["llm"]["api_key"]
-            safe["llm"]["api_key"] = key[:8] + "..." + key[-4:] if len(key) > 12 else "***"
-        _print_json(json.dumps(safe, ensure_ascii=False, indent=2))
-
+        k = safe.get("llm",{}).get("api_key","")
+        if k: safe["llm"]["api_key"] = k[:8]+"..."+k[-4:] if len(k)>12 else "***"
+        console.print_json(json.dumps(safe, ensure_ascii=False, indent=2))
     elif cmd == "/model":
         if args:
             config["llm"]["model"] = args
             agent.llm.model = args
-            if paw_input:
-                paw_input.update_config(config)
-            _write_line(f"{S.GREEN}{S.CHECK} 模型已切换: {args}{S.RESET}")
+            if tui: tui.update_config(config)
+            _wl(f"{S.GREEN}[OK] 模型: {args}{S.RESET}")
         else:
-            _write_line(f"当前模型: {S.CYAN}{config['llm']['model']}{S.RESET}")
-
+            _wl(f"模型: {S.CYAN}{config['llm']['model']}{S.RESET}")
     elif cmd == "/persona":
         if args:
-            pname = args.strip()
-            if pname in PERSONAS:
-                p = get_persona(pname)
-                config["agent"]["system_prompt"] = p["system_prompt"]
-                config["agent"]["_persona"] = pname
-                agent.system_prompt = p["system_prompt"]
-                if paw_input:
-                    paw_input.update_config(config)
-                _write_line(f"{S.GREEN}{S.CHECK} 人格已切换: {p['name']}{S.RESET} {S.DIM}- {p['description']}{S.RESET}")
+            p = args.strip()
+            if p in PERSONAS:
+                info = get_persona(p)
+                config["agent"]["system_prompt"] = info["system_prompt"]
+                config["agent"]["_persona"] = p
+                agent.system_prompt = info["system_prompt"]
+                if tui: tui.update_config(config)
+                _wl(f"{S.GREEN}[OK] 人格: {info['name']} - {info['description']}{S.RESET}")
             else:
-                _write_line(f"{S.RED}{S.CROSS} 未知人格: {pname}{S.RESET}")
+                _wl(f"{S.RED}[X] 未知: {p}{S.RESET}")
                 _show_personas()
         else:
             _show_personas()
-
     elif cmd == "/system":
         if args:
             agent.system_prompt = args
             config["agent"]["system_prompt"] = args
-            if paw_input:
-                paw_input.update_config(config)
-            _write_line(f"{S.GREEN}{S.CHECK} 系统提示已更新{S.RESET}")
-            _write_line(f"{S.DIM}{args[:100]}{'...' if len(args) > 100 else ''}{S.RESET}")
+            if tui: tui.update_config(config)
+            _wl(f"{S.GREEN}[OK] 系统提示已更新{S.RESET}")
         else:
-            current = agent.system_prompt or "(未设置)"
-            _write_line(f"{S.BOLD}当前系统提示:{S.RESET}\n{current}")
-            _write_line(f"\n{S.DIM}用法: /system <新的系统提示>{S.RESET}")
-
+            _wl(f"系统提示:\n{agent.system_prompt or '(未设置)'}")
     elif cmd == "/export":
-        content = _export_session(agent, session_id)
-        if content:
-            export_dir = Path.home() / ".paw" / "exports"
-            export_dir.mkdir(parents=True, exist_ok=True)
-            filename = f"paw_{session_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-            export_path = export_dir / filename
-            export_path.write_text(content, encoding="utf-8")
-            _write_line(f"{S.GREEN}{S.CHECK} 已导出: {export_path}{S.RESET}")
+        msgs = agent.memory.get_messages(sid, limit=200)
+        if msgs:
+            d = Path.home()/".paw"/"exports"
+            d.mkdir(parents=True, exist_ok=True)
+            f = d/f"paw_{sid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+            lines = [f"# Paw 对话记录\n会话: {sid}\n---\n"]
+            for m in msgs:
+                r = m.get("role","")
+                c = m.get("content","")
+                if c: lines.append(f"**{r}:** {c}\n")
+            f.write_text("\n".join(lines), encoding="utf-8")
+            _wl(f"{S.GREEN}[OK] 导出: {f}{S.RESET}")
         else:
-            _write_line(f"{S.YELLOW}当前会话无内容{S.RESET}")
-
+            _wl(f"{S.YELLOW}无内容{S.RESET}")
     elif cmd == "/tools":
         from paw.core.tools import get_all_tools
-        tools = get_all_tools()
-        table = Table(title="可用工具", show_lines=True, border_style="cyan")
-        table.add_column("工具名", style="cyan")
-        table.add_column("描述")
-        for t in tools:
-            table.add_row(t.name, t.description)
-        _print(table)
-
+        t = Table(title="工具", show_lines=True, border_style="cyan")
+        t.add_column("名称", style="cyan")
+        t.add_column("描述")
+        for tool in get_all_tools():
+            t.add_row(tool.name, tool.description)
+        console.print(t)
     elif cmd == "/plugins":
         from paw.plugins import PLUGINS_DIR, discover_plugins, create_plugin_scaffold
         if args == "init":
             from rich.prompt import Prompt
-            name = Prompt.ask("插件名称", default="my_plugin")
+            n = Prompt.ask("名称", default="my_plugin")
             try:
-                path = create_plugin_scaffold(name)
-                _write_line(f"{S.GREEN}{S.CHECK} 插件模板: {path}{S.RESET}")
+                p = create_plugin_scaffold(n)
+                _wl(f"{S.GREEN}[OK] 模板: {p}{S.RESET}")
             except FileExistsError:
-                _write_line(f"{S.YELLOW}插件 {name} 已存在{S.RESET}")
+                _wl(f"{S.YELLOW}已存在{S.RESET}")
         elif args == "reload":
-            results = _load_plugins(config)
-            if results:
-                for n, r in results.items():
-                    status = S.CHECK if r["tools"] and not r["errors"] else S.CROSS
-                    _write_line(f"  {status} {n}: {r['tools']}")
-            else:
-                _write_line(f"{S.DIM}无插件{S.RESET}")
+            _load_plugins(config)
+            _wl(f"{S.GREEN}[OK] 重载完成{S.RESET}")
         else:
-            plugin_files = discover_plugins()
-            _write_line(f"{S.BOLD}插件目录:{S.RESET} {PLUGINS_DIR}")
-            if plugin_files:
-                for f in plugin_files:
-                    _write_line(f"  {S.FILE} {f.name}")
-            else:
-                _write_line(f"{S.DIM}  (空){S.RESET}")
-            _write_line(f"\n{S.DIM}/plugins init 创建模板 | /plugins reload 重载{S.RESET}")
-
+            files = discover_plugins()
+            _wl(f"插件目录: {PLUGINS_DIR}")
+            for f in files: _wl(f"  {f.name}")
+            if not files: _wl(f"  (空)")
     elif cmd == "/tokens":
-        usage = agent.get_token_usage()
-        _write_line(f"""
-{S.BOLD_CYAN}{S.CHART} Token 用量{S.RESET}
-  Prompt tokens:     {S.CYAN}{usage['prompt_tokens']}{S.RESET}
-  Completion tokens: {S.CYAN}{usage['completion_tokens']}{S.RESET}
-  Total tokens:      {S.BOLD_CYAN}{usage['total_tokens']}{S.RESET}
-  请求次数:          {usage['requests']}
-""")
-
+        u = agent.get_token_usage()
+        _wl(f"\n  Prompt: {u['prompt_tokens']}  Completion: {u['completion_tokens']}  Total: {u['total_tokens']}  Requests: {u['requests']}\n")
     else:
-        _write_line(f"{S.YELLOW}{S.WARN} 未知命令: {cmd}{S.RESET}  {S.DIM}输入 /help 查看帮助{S.RESET}")
-
-    return True, session_id, paw_input
-
-
-def _print_json(text: str):
-    console.print_json(text)
+        _wl(f"{S.YELLOW}[!] 未知: {cmd}  /help 帮助{S.RESET}")
+    return True, sid, tui
 
 
-# ========== 主聊天循环 ==========
+def _load_plugins(config):
+    if not config.get("tools",{}).get("plugins_enabled",True): return {}
+    try:
+        from paw.plugins import load_plugins
+        return load_plugins()
+    except: return {}
+
+
+# ===== chat =====
 
 @app.command()
 def chat(
-    model: str = typer.Option(None, "--model", "-m", help="指定模型"),
-    session: str = typer.Option(None, "--session", "-s", help="会话 ID"),
-    persona: str = typer.Option(None, "--persona", "-p", help="人格"),
-    no_tokens: bool = typer.Option(False, "--no-tokens", help="不显示 token 用量"),
-    no_tui: bool = typer.Option(False, "--no-tui", help="使用传统输入 (无补全)"),
+    model: str = typer.Option(None, "--model", "-m"),
+    session: str = typer.Option(None, "--session", "-s"),
+    persona: str = typer.Option(None, "--persona", "-p"),
+    no_tokens: bool = typer.Option(False, "--no-tokens"),
+    no_tui: bool = typer.Option(False, "--no-tui"),
 ):
     """开始聊天"""
     import paw.tools.builtin
-
     config = load_config()
-
     if not config["llm"].get("api_key"):
-        _write_line(f"{S.RED}{S.CROSS} 未配置 API Key！{S.RESET}")
-        _write_line(f"请运行 {S.CYAN}paw init{S.RESET} 或编辑 {S.CYAN}{CONFIG_FILE}{S.RESET}")
+        _wl(f"{S.RED}[X] 未配置 API Key! paw init{S.RESET}")
         raise typer.Exit(1)
-
-    if model:
-        config["llm"]["model"] = model
-
+    if model: config["llm"]["model"] = model
     if persona:
         p = get_persona(persona)
         config["agent"]["system_prompt"] = p["system_prompt"]
         config["agent"]["_persona"] = persona
-
-    session_id = session or str(uuid.uuid4())[:8]
-
-    plugin_results = _load_plugins(config)
-    if plugin_results:
-        loaded = sum(1 for r in plugin_results.values() if r["tools"] and not r["errors"])
-        if loaded:
-            _write_line(f"{S.DIM}{S.PLUG} 已加载 {loaded} 个插件{S.RESET}")
-
+    sid = session or str(uuid.uuid4())[:8]
+    _load_plugins(config)
     from paw.core.agent import Agent
-    agent = Agent(config=config, session_id=session_id)
+    agent = Agent(config=config, session_id=sid)
+    pn = config["agent"].get("_persona", "default")
+    pi = get_persona(pn)
+    show_tk = config.get("agent",{}).get("show_token_usage",True) and not no_tokens
+    _banner()
+    _wl(f"{S.DIM}会话: {sid} | 模型: {config['llm']['model']} | 人格: {pi['name']}{S.RESET}\n")
 
-    persona_name = config["agent"].get("_persona", "default")
-    persona_info = get_persona(persona_name)
-    show_tokens = config.get("agent", {}).get("show_token_usage", True) and not no_tokens
-
-    _print_banner()
-    _write_line(
-        f"{S.DIM}会话: {session_id} · "
-        f"模型: {config['llm']['model']} · "
-        f"人格: {persona_info['name']}{S.RESET}\n"
-    )
-
-    paw_input = None
-    use_tui = not no_tui
-
-    if use_tui:
+    tui = None
+    if not no_tui:
         try:
             from paw.tui import PawInput
-            paw_input = PawInput(
-                config=config,
-                session_id=session_id,
-                get_sessions=lambda: agent.memory.get_sessions(),
-            )
+            tui = PawInput(config=config, session_id=sid, get_sessions=lambda: agent.memory.get_sessions())
         except Exception as e:
-            _write_line(f"{S.WARN}智能输入初始化失败: {e}，使用传统输入")
-            use_tui = False
+            _wl(f"{S.YELLOW}[!] TUI 失败: {e}{S.RESET}")
 
+    try:
+        while True:
+            try:
+                if tui:
+                    user_input = tui.prompt()
+                else:
+                    _w(f"{S.BOLD_GREEN}you > {S.RESET}")
+                    user_input = input().strip()
+            except (KeyboardInterrupt, EOFError):
+                _wl("\nbye")
+                break
+            if not user_input: continue
+
+            if user_input.startswith("/"):
+                try:
+                    _, sid, tui = _cmd(user_input, agent, sid, config, tui)
+                except SystemExit:
+                    _wl("bye")
+                    break
+                continue
+
+            _w(f"\n{S.BOLD_CYAN}>>{S.RESET} ")
+            try:
+                async def _run():
+                    ft = ""
+                    async for ev in agent.chat_stream(user_input):
+                        if ev["type"] == "token":
+                            ft += ev["content"]
+                            _w(ev["content"])
+                        elif ev["type"] == "tool_start":
+                            a = ", ".join(f"{k}={repr(v)[:30]}" for k,v in ev["args"].items())
+                            _w(f"\n  [tool] {ev['name']}({a})")
+                            _w(f"\n{S.BOLD_CYAN}>>{S.RESET} ")
+                        elif ev["type"] == "tool_result":
+                            _w(f"\n  [OK] {ev['result'][:60]}")
+                            _w(f"\n{S.BOLD_CYAN}>>{S.RESET} ")
+                        elif ev["type"] == "tool_error":
+                            _w(f"\n  [X] {ev['error']}")
+                            _w(f"\n{S.BOLD_CYAN}>>{S.RESET} ")
+                        elif ev["type"] == "round":
+                            _w(f"\n  -- round {ev['number']} --")
+                            _w(f"\n{S.BOLD_CYAN}>>{S.RESET} ")
+                        elif ev["type"] == "done":
+                            break
+                    return ft
+                asyncio.run(_run())
+                _wl()
+                if show_tk: _wl(f"{S.DIM}{agent.get_token_summary()}{S.RESET}")
+                _wl()
+            except KeyboardInterrupt:
+                _wl(f"\n{S.YELLOW}interrupted{S.RESET}\n")
+            except Exception as e:
+                _wl(f"\n{S.RED}[X] {e}{S.RESET}\n")
+    finally:
+        asyncio.run(agent.close())
+
+
+# ===== init =====
+
+@app.command()
+def init():
+    """初始化配置"""
+    from rich.prompt import Prompt
+    _banner()
+    _wl(f"\n{S.BOLD}>> Paw 初始化{S.RESET}\n")
+    config = DEFAULT_CONFIG.copy()
+    config["llm"]["api_key"] = Prompt.ask("  API Key", password=True)
+    config["llm"]["base_url"] = Prompt.ask("  Base URL", default="https://api.openai.com/v1")
+    config["llm"]["model"] = Prompt.ask("  模型", default="gpt-4o-mini")
+    config["agent"]["name"] = Prompt.ask("  Agent 名称", default="Paw")
+    _show_personas()
+    pc = Prompt.ask("  人格", default="default")
+    if pc in PERSONAS:
+        config["agent"]["system_prompt"] = PERSONAS[pc]["system_prompt"]
+        config["agent"]["_persona"] = pc
+    config["web"]["port"] = int(Prompt.ask("  Web 端口", default="8765"))
+    save_config(config)
+    from paw.plugins import PLUGINS_DIR
+    PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
+    _wl(f"\n{S.GREEN}[OK] 配置已保存: {CONFIG_FILE}{S.RESET}")
+    _wl(f"  paw chat     开始聊天")
+    _wl(f"  paw web      Web UI")
+    _wl(f"  paw --help   帮助\n")
+
+
+# ===== web =====
+
+@app.command()
+def web(host: str = typer.Option(None, "--host", "-h"), port: int = typer.Option(None, "--port", "-p")):
+    """启动 Web UI"""
+    import paw.tools.builtin
+    config = load_config()
+    if not config["llm"].get("api_key"):
+        _wl(f"{S.RED}[X] paw init{S.RESET}")
+        raise typer.Exit(1)
+    _load_plugins(config)
+    h = host or config["web"].get("host","127.0.0.1")
+    p = port or config["web"].get("port",8765)
+    console.print(Panel.fit(f"[bold cyan]>> Paw Web UI[/]\nhttp://{h}:{p}\n[dim]Ctrl+C 停止[/]", border_style="cyan"))
+    from paw.web.app import create_app
+    import uvicorn
+    uvicorn.run(create_app(config), host=h, port=p, log_level="warning")
+
+
+# ===== 其他命令 =====
+
+@app.command()
+def config_show():
+    """查看配置"""
+    import json
+    cfg = load_config()
+    k = cfg.get("llm",{}).get("api_key","")
+    if k: cfg["llm"]["api_key"] = k[:8]+"..."+k[-4:] if len(k)>12 else "***"
+    console.print_json(json.dumps(cfg, ensure_ascii=False, indent=2))
+
+@app.command()
+def config_set(key: str = typer.Argument(...), value: str = typer.Argument(...)):
+    """修改配置"""
+    if value.lower() in ("true","false"): value = value.lower()=="true"
+    elif value.isdigit(): value = int(value)
+    update_config(key, value)
+    _wl(f"{S.GREEN}[OK] {key} = {value}{S.RESET}")
+
+@app.command()
+def plugins(action: str = typer.Argument("list")):
+    """管理插件"""
+    from paw.plugins import PLUGINS_DIR, discover_plugins, create_plugin_scaffold
+    if action == "init":
+        from rich.prompt import Prompt
+        n = Prompt.ask("名称", default="my_plugin")
+        try: _wl(f"{S.GREEN}[OK] {create_plugin_scaffold(n)}{S.RESET}")
+        except FileExistsError: _wl(f"{S.YELLOW}已存在{S.RESET}")
+    elif action == "reload":
+        _load_plugins(load_config())
+        _wl(f"{S.GREEN}[OK] 重载完成{S.RESET}")
+    else:
+        files = discover_plugins()
+        _wl(f"目录: {PLUGINS_DIR}")
+        for f in files: _wl(f"  {f.name}")
+        if not files: _wl(f"  (空)")
+
+@app.command()
+def version():
+    """显示版本"""
+    _wl(f">> {__app_name__} v{__version__}")
+
+
+if __name__ == "__main__":
+    app()
