@@ -1,4 +1,4 @@
-"""Paw CLI v3 - 会话管理、插件系统、Token 追踪、流式 Markdown"""
+"""Paw CLI v4 - prompt_toolkit 智能输入 + Rich 渲染"""
 
 import asyncio
 import sys
@@ -8,13 +8,9 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
-from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.prompt import Prompt
-from rich.text import Text
 from rich.table import Table
-from rich.syntax import Syntax
 
 from paw import __version__, __app_name__
 from paw.config import load_config, save_config, update_config, CONFIG_FILE, DEFAULT_CONFIG
@@ -28,35 +24,86 @@ app = typer.Typer(
 console = Console()
 
 
+# ========== 显示函数 ==========
+
 def _print_banner():
     console.print(Panel.fit(
         f"[bold cyan]🐾 {__app_name__}[/] v{__version__}\n"
-        "[dim]轻量级 AI 智能体 · 输入消息开始对话 · /help 查看命令[/]",
+        "[dim]轻量级 AI 智能体 · Tab 补全 · Ctrl+L 清屏 · /help 帮助[/]",
         border_style="cyan",
     ))
 
 
 def _print_help():
     console.print("""
-[bold]聊天命令:[/]
+[bold cyan]聊天命令:[/]
   [cyan]/help[/]         显示帮助
   [cyan]/new[/]          新建会话
   [cyan]/sessions[/]     查看/切换会话
+  [cyan]/switch <id>[/]  切换到指定会话
   [cyan]/clear[/]        清空当前会话
   [cyan]/history[/]      查看历史消息
-  [cyan]/export[/]       导出当前会话为 Markdown
+  [cyan]/export[/]       导出为 Markdown
 
-[bold]配置命令:[/]
+[bold cyan]配置命令:[/]
   [cyan]/config[/]       查看当前配置
-  [cyan]/model[/]        切换模型
-  [cyan]/persona[/]      切换/查看人格
-  [cyan]/system[/]       查看/修改系统提示
+  [cyan]/model <名称>[/] 切换模型
+  [cyan]/persona <id>[/] 切换人格
+  [cyan]/system <提示>[/] 查看/修改系统提示
   [cyan]/tools[/]        列出可用工具
   [cyan]/plugins[/]      管理插件
   [cyan]/tokens[/]       查看 Token 用量
 
+[bold cyan]快捷键:[/]
+  [cyan]Tab[/]           自动补全
+  [cyan]↑/↓[/]           浏览历史输入
+  [cyan]Ctrl+L[/]        清屏
+  [cyan]Ctrl+C[/]        中断/清空输入
+  [cyan]Ctrl+D[/]        退出 (空输入时)
+  [cyan]Shift+Enter[/]   多行输入
+
 [bold]直接输入消息即可与 AI 对话[/]
 """)
+
+
+def _show_sessions(memory, current_session_id: str):
+    """显示会话列表"""
+    sessions = memory.get_sessions(limit=20)
+    if not sessions:
+        console.print("[dim]暂无历史会话[/]")
+        return
+
+    table = Table(title="会话列表", show_lines=True, border_style="cyan")
+    table.add_column("", width=3)
+    table.add_column("会话 ID", style="cyan")
+    table.add_column("标题", max_width=40)
+    table.add_column("人格")
+    table.add_column("消息数", justify="right")
+    table.add_column("最后活跃")
+
+    for s in sessions:
+        sid = s["session_id"]
+        is_current = "▶" if sid == current_session_id else " "
+        ts = datetime.fromtimestamp(s["last_active"]).strftime("%m-%d %H:%M")
+        title = s.get("title", "") or "(无标题)"
+        persona = s.get("persona", "default")
+        table.add_row(is_current, sid, title, persona, str(s["message_count"]), ts)
+
+    console.print(table)
+    console.print("[dim]使用 /switch <会话ID> 切换会话[/]")
+
+
+def _show_personas():
+    """显示可用人格列表"""
+    table = Table(title="可用人格", show_lines=True, border_style="cyan")
+    table.add_column("ID", style="cyan")
+    table.add_column("表情")
+    table.add_column("名称")
+    table.add_column("描述")
+    for p in list_personas():
+        table.add_row(p["key"], p["emoji"], p["name"], p["description"])
+    console.print(table)
+    console.print("[dim]使用 /persona <id> 切换人格[/]")
 
 
 def _export_session(agent, session_id: str) -> str:
@@ -81,16 +128,12 @@ def _export_session(agent, session_id: str) -> str:
         role = msg.get("role", "unknown")
         content = msg.get("content", "")
         tool_name = msg.get("name", "")
-
         role_display = role_map.get(role, role)
 
         if role == "tool" and tool_name:
             lines.append(f"### 🔧 工具: {tool_name}\n")
             lines.append(f"```\n{content}\n```\n")
-        elif role == "assistant":
-            lines.append(f"### {role_display}\n")
-            lines.append(f"{content}\n")
-        elif role == "user":
+        elif role in ("assistant", "user"):
             lines.append(f"### {role_display}\n")
             lines.append(f"{content}\n")
         else:
@@ -111,45 +154,192 @@ def _load_plugins(config: dict):
         return {}
 
 
-def _show_personas():
-    """显示可用人格列表"""
-    table = Table(title="可用人格", show_lines=True)
-    table.add_column("ID", style="cyan")
-    table.add_column("表情")
-    table.add_column("名称")
-    table.add_column("描述")
-    for p in list_personas():
-        table.add_row(p["key"], p["emoji"], p["name"], p["description"])
-    console.print(table)
-    console.print("[dim]使用 /persona <id> 切换人格[/]")
+# ========== 命令处理 ==========
+
+def handle_command(cmd_line: str, agent, session_id: str, config: dict,
+                   paw_input=None) -> tuple:
+    """
+    处理内置命令。
+    返回 (handled: bool, new_session_id: str, new_paw_input: PawInput|None)
+    """
+    parts = cmd_line.split(maxsplit=1)
+    cmd = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else ""
+
+    if cmd in ("/quit", "/exit", "/q"):
+        raise SystemExit(0)
+
+    elif cmd == "/help":
+        _print_help()
+
+    elif cmd == "/new":
+        old_id = session_id
+        session_id = str(uuid.uuid4())[:8]
+        agent.session_id = session_id
+        # 保存旧会话标题
+        first_msg = agent.memory.get_last_user_message(old_id)
+        if first_msg:
+            agent.memory.set_session_meta(old_id, title=first_msg[:50])
+        console.print(f"[green]✅ 新会话: {session_id}[/] [dim](旧会话 {old_id} 已保留)[/]")
+        if paw_input:
+            paw_input.update_session_id(session_id)
+
+    elif cmd == "/sessions":
+        _show_sessions(agent.memory, session_id)
+
+    elif cmd == "/switch":
+        if not args:
+            console.print("[yellow]用法: /switch <会话ID>[/]")
+        else:
+            target = args.strip()
+            sessions = agent.memory.get_sessions()
+            valid_ids = [s["session_id"] for s in sessions]
+            if target in valid_ids:
+                session_id = target
+                agent.session_id = target
+                msg_count = len(agent.memory.get_messages(target, limit=999))
+                console.print(f"[green]✅ 已切换到会话 {target}[/] [dim]({msg_count} 条消息)[/]")
+                if paw_input:
+                    paw_input.update_session_id(target)
+            else:
+                console.print(f"[red]❌ 会话 {target} 不存在[/]")
+
+    elif cmd == "/clear":
+        agent.memory.clear_session(session_id)
+        console.print("[yellow]🗑️ 会话已清空[/]")
+
+    elif cmd == "/history":
+        messages = agent.memory.get_messages(session_id, limit=50)
+        if not messages:
+            console.print("[dim]当前会话无历史消息[/]")
+        else:
+            table = Table(title=f"会话 {session_id}", show_lines=False, border_style="dim")
+            table.add_column("角色", style="cyan", width=10)
+            table.add_column("内容", max_width=70)
+            for msg in messages:
+                role = msg.get("role", "?")
+                content = msg.get("content", "")
+                if content:
+                    display = content[:100] + "..." if len(content) > 100 else content
+                    table.add_row(role, display.replace("\n", " "))
+            console.print(table)
+
+    elif cmd == "/config":
+        import json
+        safe = dict(config)
+        if safe.get("llm", {}).get("api_key"):
+            key = safe["llm"]["api_key"]
+            safe["llm"]["api_key"] = key[:8] + "..." + key[-4:] if len(key) > 12 else "***"
+        console.print_json(json.dumps(safe, ensure_ascii=False, indent=2))
+
+    elif cmd == "/model":
+        if args:
+            config["llm"]["model"] = args
+            agent.llm.model = args
+            if paw_input:
+                paw_input.update_config(config)
+            console.print(f"[green]✅ 模型已切换: {args}[/]")
+        else:
+            console.print(f"当前模型: [cyan]{config['llm']['model']}[/]")
+
+    elif cmd == "/persona":
+        if args:
+            pname = args.strip()
+            if pname in PERSONAS:
+                p = get_persona(pname)
+                config["agent"]["system_prompt"] = p["system_prompt"]
+                config["agent"]["_persona"] = pname
+                agent.system_prompt = p["system_prompt"]
+                if paw_input:
+                    paw_input.update_config(config)
+                console.print(f"[green]✅ 人格已切换: {p['emoji']} {p['name']}[/] [dim]- {p['description']}[/]")
+            else:
+                console.print(f"[red]❌ 未知人格: {pname}[/]")
+                _show_personas()
+        else:
+            _show_personas()
+
+    elif cmd == "/system":
+        if args:
+            agent.system_prompt = args
+            config["agent"]["system_prompt"] = args
+            if paw_input:
+                paw_input.update_config(config)
+            console.print(f"[green]✅ 系统提示已更新[/]")
+            console.print(f"[dim]{args[:100]}{'...' if len(args) > 100 else ''}[/]")
+        else:
+            current = agent.system_prompt or "(未设置)"
+            console.print(f"[bold]当前系统提示:[/]\n{current}")
+            console.print("\n[dim]用法: /system <新的系统提示>[/]")
+
+    elif cmd == "/export":
+        content = _export_session(agent, session_id)
+        if content:
+            export_dir = Path.home() / ".paw" / "exports"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"paw_{session_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+            export_path = export_dir / filename
+            export_path.write_text(content, encoding="utf-8")
+            console.print(f"[green]✅ 已导出: {export_path}[/]")
+        else:
+            console.print("[yellow]当前会话无内容[/]")
+
+    elif cmd == "/tools":
+        from paw.core.tools import get_all_tools
+        tools = get_all_tools()
+        table = Table(title="可用工具", show_lines=True, border_style="cyan")
+        table.add_column("工具名", style="cyan")
+        table.add_column("描述")
+        for t in tools:
+            table.add_row(t.name, t.description)
+        console.print(table)
+
+    elif cmd == "/plugins":
+        from paw.plugins import PLUGINS_DIR, discover_plugins, create_plugin_scaffold
+        if args == "init":
+            from rich.prompt import Prompt
+            name = Prompt.ask("插件名称", default="my_plugin")
+            try:
+                path = create_plugin_scaffold(name)
+                console.print(f"[green]✅ 插件模板: {path}[/]")
+            except FileExistsError:
+                console.print(f"[yellow]插件 {name} 已存在[/]")
+        elif args == "reload":
+            results = _load_plugins(config)
+            if results:
+                for n, r in results.items():
+                    status = "✅" if r["tools"] and not r["errors"] else "❌"
+                    console.print(f"  {status} {n}: {r['tools']}")
+            else:
+                console.print("[dim]无插件[/]")
+        else:
+            plugin_files = discover_plugins()
+            console.print(f"[bold]插件目录:[/] {PLUGINS_DIR}")
+            if plugin_files:
+                for f in plugin_files:
+                    console.print(f"  📄 {f.name}")
+            else:
+                console.print("[dim]  (空)[/]")
+            console.print("\n[dim]/plugins init 创建模板 | /plugins reload 重载[/]")
+
+    elif cmd == "/tokens":
+        usage = agent.get_token_usage()
+        console.print(Panel(
+            f"Prompt tokens:     [cyan]{usage['prompt_tokens']}[/]\n"
+            f"Completion tokens: [cyan]{usage['completion_tokens']}[/]\n"
+            f"Total tokens:      [bold cyan]{usage['total_tokens']}[/]\n"
+            f"请求次数:          {usage['requests']}",
+            title="📊 Token 用量",
+            border_style="cyan",
+        ))
+
+    else:
+        console.print(f"[yellow]❓ 未知命令: {cmd}[/]  [dim]输入 /help 查看帮助[/]")
+
+    return True, session_id, paw_input
 
 
-def _show_sessions(memory, current_session_id: str):
-    """显示会话列表"""
-    sessions = memory.get_sessions(limit=20)
-    if not sessions:
-        console.print("[dim]暂无历史会话[/]")
-        return
-
-    table = Table(title="会话列表", show_lines=True)
-    table.add_column("", width=3)
-    table.add_column("会话 ID", style="cyan")
-    table.add_column("标题", max_width=40)
-    table.add_column("人格")
-    table.add_column("消息数", justify="right")
-    table.add_column("最后活跃")
-
-    for s in sessions:
-        sid = s["session_id"]
-        is_current = "▶" if sid == current_session_id else " "
-        ts = datetime.fromtimestamp(s["last_active"]).strftime("%m-%d %H:%M")
-        title = s.get("title", "") or "(无标题)"
-        persona = s.get("persona", "default")
-        table.add_row(is_current, sid, title, persona, str(s["message_count"]), ts)
-
-    console.print(table)
-    console.print("[dim]使用 /switch <会话ID> 切换会话[/]")
-
+# ========== 主聊天循环 ==========
 
 @app.command()
 def chat(
@@ -157,6 +347,7 @@ def chat(
     session: str = typer.Option(None, "--session", "-s", help="会话 ID"),
     persona: str = typer.Option(None, "--persona", "-p", help="人格"),
     no_tokens: bool = typer.Option(False, "--no-tokens", help="不显示 token 用量"),
+    no_tui: bool = typer.Option(False, "--no-tui", help="使用传统输入 (无补全)"),
 ):
     """开始聊天"""
     import paw.tools.builtin
@@ -171,7 +362,6 @@ def chat(
     if model:
         config["llm"]["model"] = model
 
-    # 设置人格
     if persona:
         p = get_persona(persona)
         config["agent"]["system_prompt"] = p["system_prompt"]
@@ -189,9 +379,9 @@ def chat(
     from paw.core.agent import Agent
     agent = Agent(config=config, session_id=session_id)
 
-    # 显示人格信息
     persona_name = config["agent"].get("_persona", "default")
     persona_info = get_persona(persona_name)
+    show_tokens = config.get("agent", {}).get("show_token_usage", True) and not no_tokens
 
     _print_banner()
     console.print(
@@ -200,201 +390,55 @@ def chat(
         f"人格: {persona_info['emoji']} {persona_info['name']}[/]\n"
     )
 
-    show_tokens = config.get("agent", {}).get("show_token_usage", True) and not no_tokens
+    # 初始化智能输入
+    paw_input = None
+    use_tui = not no_tui
+
+    if use_tui:
+        try:
+            from paw.tui import PawInput
+            paw_input = PawInput(
+                config=config,
+                session_id=session_id,
+                get_sessions=lambda: agent.memory.get_sessions(),
+            )
+        except Exception as e:
+            console.print(f"[yellow]⚠️ 智能输入初始化失败: {e}，使用传统输入[/]")
+            use_tui = False
 
     try:
         while True:
+            # ========== 获取输入 ==========
             try:
-                user_input = console.input("[bold green]你> [/]").strip()
-            except (EOFError, KeyboardInterrupt):
+                if use_tui and paw_input:
+                    user_input = paw_input.prompt()
+                else:
+                    user_input = console.input("[bold green]你 › [/]").strip()
+            except KeyboardInterrupt:
+                console.print("\n[dim]再见 👋[/]")
+                break
+            except EOFError:
                 console.print("\n[dim]再见 👋[/]")
                 break
 
             if not user_input:
                 continue
 
-            # 内置命令
+            # ========== 处理命令 ==========
             if user_input.startswith("/"):
-                cmd = user_input.split()[0].lower()
-                args = user_input.split(maxsplit=1)[1] if " " in user_input else ""
-
-                if cmd in ("/quit", "/exit", "/q"):
+                try:
+                    _, session_id, paw_input = handle_command(
+                        user_input, agent, session_id, config, paw_input
+                    )
+                except SystemExit:
                     console.print("[dim]再见 👋[/]")
                     break
+                continue
 
-                elif cmd == "/help":
-                    _print_help()
-                    continue
+            # ========== AI 对话 (流式) ==========
+            # 打印 AI 回复前缀
+            console.print("[bold cyan]🐾[/] ", end="")
 
-                elif cmd == "/new":
-                    # 新建会话
-                    old_id = session_id
-                    session_id = str(uuid.uuid4())[:8]
-                    agent.session_id = session_id
-                    console.print(f"[green]✅ 新会话: {session_id}[/] (旧会话 {old_id} 已保留)")
-                    continue
-
-                elif cmd == "/sessions":
-                    _show_sessions(agent.memory, session_id)
-                    continue
-
-                elif cmd == "/switch":
-                    if not args:
-                        console.print("[yellow]用法: /switch <会话ID>[/]")
-                        continue
-                    target = args.strip()
-                    # 验证会话存在
-                    sessions = agent.memory.get_sessions()
-                    valid_ids = [s["session_id"] for s in sessions]
-                    if target in valid_ids:
-                        session_id = target
-                        agent.session_id = target
-                        msg_count = len(agent.memory.get_messages(target, limit=999))
-                        console.print(f"[green]✅ 已切换到会话 {target} ({msg_count} 条消息)[/]")
-                    else:
-                        console.print(f"[red]❌ 会话 {target} 不存在[/]")
-                    continue
-
-                elif cmd == "/clear":
-                    agent.memory.clear_session(session_id)
-                    console.print("[yellow]会话已清空[/]")
-                    continue
-
-                elif cmd == "/history":
-                    messages = agent.memory.get_messages(session_id, limit=50)
-                    if not messages:
-                        console.print("[dim]当前会话无历史消息[/]")
-                    else:
-                        table = Table(title=f"会话 {session_id} 的历史", show_lines=False)
-                        table.add_column("角色", style="cyan", width=10)
-                        table.add_column("内容", max_width=70)
-                        for msg in messages:
-                            role = msg.get("role", "?")
-                            content = msg.get("content", "")
-                            if content:
-                                display = content[:100] + "..." if len(content) > 100 else content
-                                table.add_row(role, display.replace("\n", " "))
-                        console.print(table)
-                    continue
-
-                elif cmd == "/config":
-                    safe = dict(config)
-                    if safe.get("llm", {}).get("api_key"):
-                        key = safe["llm"]["api_key"]
-                        safe["llm"]["api_key"] = key[:8] + "..." + key[-4:] if len(key) > 12 else "***"
-                    import json
-                    console.print_json(json.dumps(safe, ensure_ascii=False, indent=2))
-                    continue
-
-                elif cmd == "/model":
-                    if args:
-                        config["llm"]["model"] = args
-                        agent.llm.model = args
-                        console.print(f"[green]模型已切换: {args}[/]")
-                    else:
-                        console.print(f"当前模型: [cyan]{config['llm']['model']}[/]")
-                    continue
-
-                elif cmd == "/persona":
-                    if args:
-                        pname = args.strip()
-                        if pname in PERSONAS:
-                            p = get_persona(pname)
-                            config["agent"]["system_prompt"] = p["system_prompt"]
-                            config["agent"]["_persona"] = pname
-                            agent.system_prompt = p["system_prompt"]
-                            console.print(f"[green]人格已切换: {p['emoji']} {p['name']} - {p['description']}[/]")
-                        else:
-                            console.print(f"[red]未知人格: {pname}[/]")
-                            _show_personas()
-                    else:
-                        _show_personas()
-                    continue
-
-                elif cmd == "/system":
-                    if args:
-                        agent.system_prompt = args
-                        config["agent"]["system_prompt"] = args
-                        console.print(f"[green]✅ 系统提示已更新[/]")
-                        console.print(f"[dim]{args[:100]}{'...' if len(args) > 100 else ''}[/]")
-                    else:
-                        current = agent.system_prompt or "(未设置)"
-                        console.print(f"[bold]当前系统提示:[/]\n{current}")
-                        console.print("\n[dim]用法: /system <新的系统提示>[/]")
-                    continue
-
-                elif cmd == "/export":
-                    content = _export_session(agent, session_id)
-                    if content:
-                        export_dir = Path.home() / ".paw" / "exports"
-                        export_dir.mkdir(parents=True, exist_ok=True)
-                        filename = f"paw_{session_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-                        export_path = export_dir / filename
-                        export_path.write_text(content, encoding="utf-8")
-                        console.print(f"[green]✅ 已导出到: {export_path}[/]")
-                    else:
-                        console.print("[yellow]当前会话无内容可导出[/]")
-                    continue
-
-                elif cmd == "/tools":
-                    from paw.core.tools import get_all_tools
-                    tools = get_all_tools()
-                    table = Table(title="可用工具", show_lines=True)
-                    table.add_column("工具名", style="cyan")
-                    table.add_column("描述")
-                    for t in tools:
-                        table.add_row(t.name, t.description)
-                    console.print(table)
-                    continue
-
-                elif cmd == "/plugins":
-                    from paw.plugins import PLUGINS_DIR, discover_plugins, get_plugin_template
-                    plugin_files = discover_plugins()
-                    if args == "init":
-                        # 创建插件模板
-                        name = Prompt.ask("插件名称", default="my_plugin")
-                        from paw.plugins import create_plugin_scaffold
-                        try:
-                            path = create_plugin_scaffold(name)
-                            console.print(f"[green]✅ 插件模板已创建: {path}[/]")
-                            console.print("[dim]编辑后重启 paw chat 即可生效[/]")
-                        except FileExistsError:
-                            console.print(f"[yellow]插件 {name} 已存在[/]")
-                    elif args == "reload":
-                        results = _load_plugins(config)
-                        if results:
-                            for name, r in results.items():
-                                status = "✅" if r["tools"] and not r["errors"] else "❌"
-                                console.print(f"  {status} {name}: {r['tools']}")
-                        else:
-                            console.print("[dim]无插件[/]")
-                    else:
-                        console.print(f"[bold]插件目录:[/] {PLUGINS_DIR}")
-                        if plugin_files:
-                            for f in plugin_files:
-                                console.print(f"  📄 {f.name}")
-                        else:
-                            console.print("[dim]  (空)[/]")
-                        console.print("\n[dim]用法: /plugins init 创建模板 | /plugins reload 重载[/]")
-                    continue
-
-                elif cmd == "/tokens":
-                    usage = agent.get_token_usage()
-                    console.print(Panel(
-                        f"Prompt tokens:     {usage['prompt_tokens']}\n"
-                        f"Completion tokens: {usage['completion_tokens']}\n"
-                        f"Total tokens:      {usage['total_tokens']}\n"
-                        f"请求次数:          {usage['requests']}",
-                        title="📊 Token 用量",
-                        border_style="cyan",
-                    ))
-                    continue
-
-                else:
-                    console.print(f"[yellow]未知命令: {cmd}，输入 /help 查看帮助[/]")
-                    continue
-
-            # 调用 Agent — 流式输出（修复双重打印）
             try:
                 async def _run():
                     full_text = ""
@@ -402,24 +446,32 @@ def chat(
                     async for event in agent.chat_stream(user_input):
                         if event["type"] == "token":
                             full_text += event["content"]
-                            # 直接用 console 输出，保持颜色
-                            console.print(event["content"], end="", highlight=False)
+                            # 直接输出 token，保持流式
+                            sys.stdout.write(event["content"])
+                            sys.stdout.flush()
 
                         elif event["type"] == "tool_start":
                             name = event["name"]
                             args = event["args"]
-                            args_str = ", ".join(f"{k}={repr(v)[:50]}" for k, v in args.items())
+                            args_str = ", ".join(
+                                f"{k}={repr(v)[:40]}" for k, v in args.items()
+                            )
+                            # 工具调用用灰色显示
                             console.print(f"\n  [dim]🔧 {name}({args_str})[/]")
+                            console.print("[bold cyan]🐾[/] ", end="")
 
                         elif event["type"] == "tool_result":
-                            result_preview = event["result"][:100].replace("\n", " ")
-                            console.print(f"  [dim]   ✓ {result_preview}...[/]")
+                            preview = event["result"][:80].replace("\n", " ")
+                            console.print(f"\n  [dim]   ✓ {preview}[/]")
+                            console.print("[bold cyan]🐾[/] ", end="")
 
                         elif event["type"] == "tool_error":
-                            console.print(f"  [red]   ✗ {event['error']}[/]")
+                            console.print(f"\n  [red]   ✗ {event['error']}[/]")
+                            console.print("[bold cyan]🐾[/] ", end="")
 
                         elif event["type"] == "round":
                             console.print(f"\n  [dim]--- 第 {event['number']} 轮 ---[/]")
+                            console.print("[bold cyan]🐾[/] ", end="")
 
                         elif event["type"] == "done":
                             break
@@ -427,27 +479,32 @@ def chat(
                     return full_text
 
                 result = asyncio.run(_run())
-
-                # 流式结束后换行，显示 token 用量
                 console.print()  # 换行
+
+                # 显示 token 用量
                 if show_tokens:
                     console.print(f"[dim]{agent.get_token_summary()}[/]")
+
                 console.print()  # 空行分隔
 
             except KeyboardInterrupt:
-                console.print("\n[yellow]已中断[/]")
+                console.print("\n[yellow]⚡ 已中断[/]\n")
             except Exception as e:
-                console.print(f"\n[red]错误: {e}[/]")
+                console.print(f"\n[red]❌ 错误: {e}[/]\n")
 
     finally:
         asyncio.run(agent.close())
 
+
+# ========== 其他命令 ==========
 
 @app.command()
 def init():
     """初始化配置（新手引导）"""
     _print_banner()
     console.print("\n[bold]🐾 欢迎使用 Paw！让我们来配置一下。\n[/]")
+
+    from rich.prompt import Prompt
 
     config = DEFAULT_CONFIG.copy()
 
@@ -457,10 +514,7 @@ def init():
     api_key = Prompt.ask("   API Key", password=True)
     config["llm"]["api_key"] = api_key
 
-    base_url = Prompt.ask(
-        "   API Base URL",
-        default="https://api.openai.com/v1"
-    )
+    base_url = Prompt.ask("   API Base URL", default="https://api.openai.com/v1")
     config["llm"]["base_url"] = base_url
 
     model = Prompt.ask("   模型名称", default="gpt-4o-mini")
@@ -470,7 +524,6 @@ def init():
     name = Prompt.ask("   给你的 Agent 起个名字", default="Paw")
     config["agent"]["name"] = name
 
-    # 选择人格
     console.print("\n[bold]3. 选择人格[/]")
     _show_personas()
     persona_choice = Prompt.ask("   选择人格", default="default")
@@ -486,7 +539,6 @@ def init():
 
     save_config(config)
 
-    # 创建插件目录
     from paw.plugins import PLUGINS_DIR
     PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -516,12 +568,7 @@ def web(
     web_host = host or config["web"].get("host", "127.0.0.1")
     web_port = port or config["web"].get("port", 8765)
 
-    # 加载插件
-    plugin_results = _load_plugins(config)
-    if plugin_results:
-        loaded = sum(1 for r in plugin_results.values() if r["tools"] and not r["errors"])
-        if loaded:
-            console.print(f"[dim]🔌 已加载 {loaded} 个插件[/]")
+    _load_plugins(config)
 
     console.print(Panel.fit(
         f"[bold cyan]🐾 Paw Web UI[/]\n\n"
@@ -540,12 +587,12 @@ def web(
 @app.command()
 def config_show():
     """查看当前配置"""
+    import json
     cfg = load_config()
     safe = dict(cfg)
     if safe.get("llm", {}).get("api_key"):
         key = safe["llm"]["api_key"]
         safe["llm"]["api_key"] = key[:8] + "..." + key[-4:] if len(key) > 12 else "***"
-    import json
     console.print_json(json.dumps(safe, ensure_ascii=False, indent=2))
 
 
@@ -559,7 +606,6 @@ def config_set(
         value = value.lower() == "true"
     elif value.isdigit():
         value = int(value)
-
     update_config(key, value)
     console.print(f"[green]✅ 已设置 {key} = {value}[/]")
 
@@ -573,13 +619,13 @@ def plugins(
     import paw.tools.builtin
 
     if action == "init":
+        from rich.prompt import Prompt
         name = Prompt.ask("插件名称", default="my_plugin")
         try:
             path = create_plugin_scaffold(name)
-            console.print(f"[green]✅ 插件模板已创建: {path}[/]")
+            console.print(f"[green]✅ 插件模板: {path}[/]")
         except FileExistsError:
             console.print(f"[yellow]插件 {name} 已存在[/]")
-
     elif action == "reload":
         config = load_config()
         results = _load_plugins(config)
@@ -591,8 +637,7 @@ def plugins(
                 console.print(f"  {status} {name}: {tools_str}{errors_str}")
         else:
             console.print("[dim]无插件[/]")
-
-    else:  # list
+    else:
         plugin_files = discover_plugins()
         console.print(f"[bold]插件目录:[/] {PLUGINS_DIR}")
         if plugin_files:
@@ -600,8 +645,8 @@ def plugins(
                 console.print(f"  📄 {f.name}")
         else:
             console.print("[dim]  (空)[/]")
-        console.print("\n[dim]paw plugins init  创建插件模板[/]")
-        console.print("[dim]paw plugins reload  重载插件[/]")
+        console.print("\n[dim]paw plugins init  创建模板[/]")
+        console.print("[dim]paw plugins reload  重载[/]")
 
 
 @app.command()
