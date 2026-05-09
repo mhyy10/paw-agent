@@ -32,10 +32,8 @@ from paw.personas import PERSONAS, list_personas
 # ========== 样式定义 ==========
 
 PAW_STYLE = Style.from_dict({
-    # 提示符
-    'paw-prompt': 'bold #06b6d4',       # 青色
-    'paw-user': 'bold #22c55e',         # 绿色
-    'paw-separator': '#64748b',         # 灰色
+    # 提示符 - 紫色粗箭头
+    'prompt': 'bold #8b5cf6',
     # 补全菜单
     'completion-menu.completion': 'bg:#1e293b #e2e8f0',
     'completion-menu.completion.current': 'bg:#0ea5e9 #ffffff bold',
@@ -328,7 +326,7 @@ class PawInput:
     def prompt(self, message: str = None) -> str:
         """显示输入提示，返回用户输入"""
         if message is None:
-            message = HTML('  <ansimagenta bold>&gt; </ansimagenta>')
+            message = [('class:prompt', '  > ')]
 
         try:
             result = self.session.prompt(
