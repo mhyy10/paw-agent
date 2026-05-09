@@ -325,45 +325,56 @@ class PawInput:
         )
 
     def prompt(self, message: str = None) -> str:
-        """显示输入提示，全包围输入框"""
+        """显示输入提示，全包围输入框。空输入时静默重试。"""
         import sys
 
-        # 框线
         tl, tr, bl, br = '\u256d', '\u256e', '\u2570', '\u256f'
         h, v = '\u2500', '\u2502'
         w = 60
-
         gray = "\033[38;5;245m"
         reset = "\033[0m"
 
-        # 上边框
-        sys.stdout.write(f"\n{gray}  {tl}{h * w}{tr}{reset}\n")
-        # 左边框 + 提示符 (prompt_toolkit 会在右边留空间)
-        sys.stdout.write(f"{gray}  {v}{reset} ")
-        sys.stdout.flush()
+        while True:
+            # 上边框
+            sys.stdout.write(f"\n{gray}  {tl}{h * w}{tr}{reset}\n")
+            # 左边框 + 提示符
+            sys.stdout.write(f"{gray}  {v}{reset} ")
+            sys.stdout.flush()
 
-        try:
-            result = self.session.prompt(
-                [('class:prompt', '> ')],
-                bottom_toolbar=get_bottom_toolbar(self.config, self.session_id),
-            )
-            # 右边框 (用空格填充到固定宽度)
-            # 计算当前光标到右边框的距离
-            input_len = len(result) + 2  # "> " 的宽度
+            try:
+                result = self.session.prompt(
+                    [('class:prompt', '> ')],
+                    bottom_toolbar=get_bottom_toolbar(self.config, self.session_id),
+                )
+            except KeyboardInterrupt:
+                sys.stdout.write(f"\n{gray}  {bl}{h * w}{br}{reset}\n")
+                sys.stdout.flush()
+                raise
+            except EOFError:
+                sys.stdout.write(f"\n{gray}  {bl}{h * w}{br}{reset}\n")
+                sys.stdout.flush()
+                raise
+
+            result = result.strip()
+
+            if not result:
+                # 空输入: 用 ANSI 上移擦除框线，静默重试
+                # 上移 2 行 (上边框 + 输入行)，清到行尾
+                sys.stdout.write("\033[2A")  # 上移 2 行
+                sys.stdout.write("\033[2K")  # 清当前行
+                sys.stdout.write("\033[1B")  # 下移 1 行
+                sys.stdout.write("\033[2K")  # 清当前行
+                sys.stdout.write("\r")
+                sys.stdout.flush()
+                continue
+
+            # 有输入: 补右边框 + 下边框
+            input_len = len(result) + 2
             pad = max(1, w - input_len - 1)
             sys.stdout.write(f"{' ' * pad}{gray}{v}{reset}\n")
-            # 下边框
             sys.stdout.write(f"{gray}  {bl}{h * w}{br}{reset}\n")
             sys.stdout.flush()
-            return result.strip()
-        except KeyboardInterrupt:
-            sys.stdout.write(f"\n{gray}  {bl}{h * w}{br}{reset}\n")
-            sys.stdout.flush()
-            raise
-        except EOFError:
-            sys.stdout.write(f"\n{gray}  {bl}{h * w}{br}{reset}\n")
-            sys.stdout.flush()
-            raise
+            return result
 
     def update_session_id(self, session_id: str):
         self.session_id = session_id
