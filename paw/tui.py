@@ -325,39 +325,43 @@ class PawInput:
         )
 
     def prompt(self, message: str = None) -> str:
-        """显示输入提示，带输入框"""
+        """显示输入提示，全包围输入框"""
         import sys
 
-        # 框线字符
-        tl, tr, bl, br = '\u256d', '\u256e', '\u2570', '\u256f'  # ┌ ┐ └ ┘
-        h, v = '\u2500', '\u2502'  # ─ │
-        width = 60
+        # 框线
+        tl, tr, bl, br = '\u256d', '\u256e', '\u2570', '\u256f'
+        h, v = '\u2500', '\u2502'
+        w = 60
 
-        # 打印输入框上边框
-        sys.stdout.write(f"\033[38;5;245m  {tl}{h * width}{tr}\033[0m\n")
+        gray = "\033[38;5;245m"
+        reset = "\033[0m"
+
+        # 上边框
+        sys.stdout.write(f"\n{gray}  {tl}{h * w}{tr}{reset}\n")
+        # 左边框 + 提示符 (prompt_toolkit 会在右边留空间)
+        sys.stdout.write(f"{gray}  {v}{reset} ")
         sys.stdout.flush()
-
-        # prompt 内容: 左边框 + 提示符
-        prompt_msg = [
-            ('class:border', f'  {v} '),
-            ('class:prompt', '> '),
-        ]
 
         try:
             result = self.session.prompt(
-                prompt_msg,
+                [('class:prompt', '> ')],
                 bottom_toolbar=get_bottom_toolbar(self.config, self.session_id),
             )
-            # 打印输入框下边框
-            sys.stdout.write(f"\033[38;5;245m  {bl}{h * width}{br}\033[0m\n")
+            # 右边框 (用空格填充到固定宽度)
+            # 计算当前光标到右边框的距离
+            input_len = len(result) + 2  # "> " 的宽度
+            pad = max(1, w - input_len - 1)
+            sys.stdout.write(f"{' ' * pad}{gray}{v}{reset}\n")
+            # 下边框
+            sys.stdout.write(f"{gray}  {bl}{h * w}{br}{reset}\n")
             sys.stdout.flush()
             return result.strip()
         except KeyboardInterrupt:
-            sys.stdout.write(f"\033[38;5;245m  {bl}{h * width}{br}\033[0m\n")
+            sys.stdout.write(f"\n{gray}  {bl}{h * w}{br}{reset}\n")
             sys.stdout.flush()
             raise
         except EOFError:
-            sys.stdout.write(f"\033[38;5;245m  {bl}{h * width}{br}\033[0m\n")
+            sys.stdout.write(f"\n{gray}  {bl}{h * w}{br}{reset}\n")
             sys.stdout.flush()
             raise
 
