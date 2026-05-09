@@ -1,4 +1,4 @@
-"""Paw CLI v4 - prompt_toolkit 智能输入 + Rich 渲染"""
+"""Paw CLI v5 - 修复乱码：统一输出，隔离 Rich 和 prompt_toolkit"""
 
 import asyncio
 import sys
@@ -21,13 +21,62 @@ app = typer.Typer(
     help="🐾 Paw - 轻量级 AI 智能体框架",
     add_completion=False,
 )
-console = Console()
+
+# 关键: force_terminal=True 确保 Rich 始终输出 ANSI 码
+# 即使 stdout 被 prompt_toolkit 临时接管也不会丢失颜色
+console = Console(force_terminal=True)
+
+
+# ========== ANSI 转义码工具 ==========
+# 用于在 prompt_toolkit 和流式输出中直接写入颜色
+
+class S:
+    """ANSI 样式常量"""
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    ITALIC = "\033[3m"
+    CYAN = "\033[36m"
+    GREEN = "\033[32m"
+    RED = "\033[31m"
+    YELLOW = "\033[33m"
+    MAGENTA = "\033[35m"
+    BLUE = "\033[34m"
+    WHITE = "\033[97m"
+    GRAY = "\033[90m"
+
+    # 组合样式
+    BOLD_CYAN = "\033[1;36m"
+    BOLD_GREEN = "\033[1;32m"
+    DIM_CYAN = "\033[2;36m"
+    BRIGHT_BLACK = "\033[90m"
+
+
+def _write(text: str):
+    """直接写入 stdout 并刷新"""
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+
+def _write_line(text: str = ""):
+    """写入一行"""
+    _write(text + "\n")
+
+
+def _print(text: str):
+    """用 Rich 打印 (带颜色)"""
+    console.print(text)
+
+
+def _print_plain(text: str):
+    """纯文本打印 (无 Rich 格式化，避免冲突)"""
+    _write_line(text)
 
 
 # ========== 显示函数 ==========
 
 def _print_banner():
-    console.print(Panel.fit(
+    _print(Panel.fit(
         f"[bold cyan]🐾 {__app_name__}[/] v{__version__}\n"
         "[dim]轻量级 AI 智能体 · Tab 补全 · Ctrl+L 清屏 · /help 帮助[/]",
         border_style="cyan",
@@ -35,42 +84,40 @@ def _print_banner():
 
 
 def _print_help():
-    console.print("""
-[bold cyan]聊天命令:[/]
-  [cyan]/help[/]         显示帮助
-  [cyan]/new[/]          新建会话
-  [cyan]/sessions[/]     查看/切换会话
-  [cyan]/switch <id>[/]  切换到指定会话
-  [cyan]/clear[/]        清空当前会话
-  [cyan]/history[/]      查看历史消息
-  [cyan]/export[/]       导出为 Markdown
+    _write_line(f"""
+{S.BOLD_CYAN}聊天命令:{S.RESET}
+  {S.CYAN}/help{S.RESET}         显示帮助
+  {S.CYAN}/new{S.RESET}          新建会话
+  {S.CYAN}/sessions{S.RESET}     查看/切换会话
+  {S.CYAN}/switch <id>{S.RESET}  切换到指定会话
+  {S.CYAN}/clear{S.RESET}        清空当前会话
+  {S.CYAN}/history{S.RESET}      查看历史消息
+  {S.CYAN}/export{S.RESET}       导出为 Markdown
 
-[bold cyan]配置命令:[/]
-  [cyan]/config[/]       查看当前配置
-  [cyan]/model <名称>[/] 切换模型
-  [cyan]/persona <id>[/] 切换人格
-  [cyan]/system <提示>[/] 查看/修改系统提示
-  [cyan]/tools[/]        列出可用工具
-  [cyan]/plugins[/]      管理插件
-  [cyan]/tokens[/]       查看 Token 用量
+{S.BOLD_CYAN}配置命令:{S.RESET}
+  {S.CYAN}/config{S.RESET}       查看当前配置
+  {S.CYAN}/model <名称>{S.RESET} 切换模型
+  {S.CYAN}/persona <id>{S.RESET} 切换人格
+  {S.CYAN}/system <提示>{S.RESET} 查看/修改系统提示
+  {S.CYAN}/tools{S.RESET}        列出可用工具
+  {S.CYAN}/plugins{S.RESET}      管理插件
+  {S.CYAN}/tokens{S.RESET}       查看 Token 用量
 
-[bold cyan]快捷键:[/]
-  [cyan]Tab[/]           自动补全
-  [cyan]↑/↓[/]           浏览历史输入
-  [cyan]Ctrl+L[/]        清屏
-  [cyan]Ctrl+C[/]        中断/清空输入
-  [cyan]Ctrl+D[/]        退出 (空输入时)
-  [cyan]Shift+Enter[/]   多行输入
+{S.BOLD_CYAN}快捷键:{S.RESET}
+  {S.CYAN}Tab{S.RESET}           自动补全
+  {S.CYAN}↑/↓{S.RESET}           浏览历史输入
+  {S.CYAN}Ctrl+L{S.RESET}        清屏
+  {S.CYAN}Ctrl+C{S.RESET}        中断/清空输入
+  {S.CYAN}Ctrl+D{S.RESET}        退出 (空输入时)
 
-[bold]直接输入消息即可与 AI 对话[/]
+{S.BOLD}直接输入消息即可与 AI 对话{S.RESET}
 """)
 
 
 def _show_sessions(memory, current_session_id: str):
-    """显示会话列表"""
     sessions = memory.get_sessions(limit=20)
     if not sessions:
-        console.print("[dim]暂无历史会话[/]")
+        _write_line(f"{S.DIM}暂无历史会话{S.RESET}")
         return
 
     table = Table(title="会话列表", show_lines=True, border_style="cyan")
@@ -89,12 +136,11 @@ def _show_sessions(memory, current_session_id: str):
         persona = s.get("persona", "default")
         table.add_row(is_current, sid, title, persona, str(s["message_count"]), ts)
 
-    console.print(table)
-    console.print("[dim]使用 /switch <会话ID> 切换会话[/]")
+    _print(table)
+    _write_line(f"{S.DIM}使用 /switch <会话ID> 切换会话{S.RESET}")
 
 
 def _show_personas():
-    """显示可用人格列表"""
     table = Table(title="可用人格", show_lines=True, border_style="cyan")
     table.add_column("ID", style="cyan")
     table.add_column("表情")
@@ -102,12 +148,11 @@ def _show_personas():
     table.add_column("描述")
     for p in list_personas():
         table.add_row(p["key"], p["emoji"], p["name"], p["description"])
-    console.print(table)
-    console.print("[dim]使用 /persona <id> 切换人格[/]")
+    _print(table)
+    _write_line(f"{S.DIM}使用 /persona <id> 切换人格{S.RESET}")
 
 
 def _export_session(agent, session_id: str) -> str:
-    """导出会话为 Markdown"""
     messages = agent.memory.get_messages(session_id, limit=200)
     if not messages:
         return ""
@@ -117,12 +162,7 @@ def _export_session(agent, session_id: str) -> str:
     lines.append(f"导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     lines.append("---\n")
 
-    role_map = {
-        "user": "👤 用户",
-        "assistant": "🐾 Paw",
-        "tool": "🔧 工具",
-        "system": "⚙️ 系统",
-    }
+    role_map = {"user": "👤 用户", "assistant": "🐾 Paw", "tool": "🔧 工具", "system": "⚙️ 系统"}
 
     for msg in messages:
         role = msg.get("role", "unknown")
@@ -143,14 +183,13 @@ def _export_session(agent, session_id: str) -> str:
 
 
 def _load_plugins(config: dict):
-    """加载插件"""
     if not config.get("tools", {}).get("plugins_enabled", True):
         return {}
     try:
         from paw.plugins import load_plugins
         return load_plugins()
     except Exception as e:
-        console.print(f"[yellow]⚠️ 插件加载失败: {e}[/]")
+        _write_line(f"{S.YELLOW}⚠️ 插件加载失败: {e}{S.RESET}")
         return {}
 
 
@@ -158,10 +197,6 @@ def _load_plugins(config: dict):
 
 def handle_command(cmd_line: str, agent, session_id: str, config: dict,
                    paw_input=None) -> tuple:
-    """
-    处理内置命令。
-    返回 (handled: bool, new_session_id: str, new_paw_input: PawInput|None)
-    """
     parts = cmd_line.split(maxsplit=1)
     cmd = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
@@ -176,11 +211,10 @@ def handle_command(cmd_line: str, agent, session_id: str, config: dict,
         old_id = session_id
         session_id = str(uuid.uuid4())[:8]
         agent.session_id = session_id
-        # 保存旧会话标题
         first_msg = agent.memory.get_last_user_message(old_id)
         if first_msg:
             agent.memory.set_session_meta(old_id, title=first_msg[:50])
-        console.print(f"[green]✅ 新会话: {session_id}[/] [dim](旧会话 {old_id} 已保留)[/]")
+        _write_line(f"{S.GREEN}✅ 新会话: {session_id}{S.RESET} {S.DIM}(旧会话 {old_id} 已保留){S.RESET}")
         if paw_input:
             paw_input.update_session_id(session_id)
 
@@ -189,7 +223,7 @@ def handle_command(cmd_line: str, agent, session_id: str, config: dict,
 
     elif cmd == "/switch":
         if not args:
-            console.print("[yellow]用法: /switch <会话ID>[/]")
+            _write_line(f"{S.YELLOW}用法: /switch <会话ID>{S.RESET}")
         else:
             target = args.strip()
             sessions = agent.memory.get_sessions()
@@ -198,20 +232,20 @@ def handle_command(cmd_line: str, agent, session_id: str, config: dict,
                 session_id = target
                 agent.session_id = target
                 msg_count = len(agent.memory.get_messages(target, limit=999))
-                console.print(f"[green]✅ 已切换到会话 {target}[/] [dim]({msg_count} 条消息)[/]")
+                _write_line(f"{S.GREEN}✅ 已切换到会话 {target}{S.RESET} {S.DIM}({msg_count} 条消息){S.RESET}")
                 if paw_input:
                     paw_input.update_session_id(target)
             else:
-                console.print(f"[red]❌ 会话 {target} 不存在[/]")
+                _write_line(f"{S.RED}❌ 会话 {target} 不存在{S.RESET}")
 
     elif cmd == "/clear":
         agent.memory.clear_session(session_id)
-        console.print("[yellow]🗑️ 会话已清空[/]")
+        _write_line(f"{S.YELLOW}🗑️ 会话已清空{S.RESET}")
 
     elif cmd == "/history":
         messages = agent.memory.get_messages(session_id, limit=50)
         if not messages:
-            console.print("[dim]当前会话无历史消息[/]")
+            _write_line(f"{S.DIM}当前会话无历史消息{S.RESET}")
         else:
             table = Table(title=f"会话 {session_id}", show_lines=False, border_style="dim")
             table.add_column("角色", style="cyan", width=10)
@@ -222,7 +256,7 @@ def handle_command(cmd_line: str, agent, session_id: str, config: dict,
                 if content:
                     display = content[:100] + "..." if len(content) > 100 else content
                     table.add_row(role, display.replace("\n", " "))
-            console.print(table)
+            _print(table)
 
     elif cmd == "/config":
         import json
@@ -230,7 +264,7 @@ def handle_command(cmd_line: str, agent, session_id: str, config: dict,
         if safe.get("llm", {}).get("api_key"):
             key = safe["llm"]["api_key"]
             safe["llm"]["api_key"] = key[:8] + "..." + key[-4:] if len(key) > 12 else "***"
-        console.print_json(json.dumps(safe, ensure_ascii=False, indent=2))
+        _print_json(json.dumps(safe, ensure_ascii=False, indent=2))
 
     elif cmd == "/model":
         if args:
@@ -238,9 +272,9 @@ def handle_command(cmd_line: str, agent, session_id: str, config: dict,
             agent.llm.model = args
             if paw_input:
                 paw_input.update_config(config)
-            console.print(f"[green]✅ 模型已切换: {args}[/]")
+            _write_line(f"{S.GREEN}✅ 模型已切换: {args}{S.RESET}")
         else:
-            console.print(f"当前模型: [cyan]{config['llm']['model']}[/]")
+            _write_line(f"当前模型: {S.CYAN}{config['llm']['model']}{S.RESET}")
 
     elif cmd == "/persona":
         if args:
@@ -252,9 +286,9 @@ def handle_command(cmd_line: str, agent, session_id: str, config: dict,
                 agent.system_prompt = p["system_prompt"]
                 if paw_input:
                     paw_input.update_config(config)
-                console.print(f"[green]✅ 人格已切换: {p['emoji']} {p['name']}[/] [dim]- {p['description']}[/]")
+                _write_line(f"{S.GREEN}✅ 人格已切换: {p['emoji']} {p['name']}{S.RESET} {S.DIM}- {p['description']}{S.RESET}")
             else:
-                console.print(f"[red]❌ 未知人格: {pname}[/]")
+                _write_line(f"{S.RED}❌ 未知人格: {pname}{S.RESET}")
                 _show_personas()
         else:
             _show_personas()
@@ -265,12 +299,12 @@ def handle_command(cmd_line: str, agent, session_id: str, config: dict,
             config["agent"]["system_prompt"] = args
             if paw_input:
                 paw_input.update_config(config)
-            console.print(f"[green]✅ 系统提示已更新[/]")
-            console.print(f"[dim]{args[:100]}{'...' if len(args) > 100 else ''}[/]")
+            _write_line(f"{S.GREEN}✅ 系统提示已更新{S.RESET}")
+            _write_line(f"{S.DIM}{args[:100]}{'...' if len(args) > 100 else ''}{S.RESET}")
         else:
             current = agent.system_prompt or "(未设置)"
-            console.print(f"[bold]当前系统提示:[/]\n{current}")
-            console.print("\n[dim]用法: /system <新的系统提示>[/]")
+            _write_line(f"{S.BOLD}当前系统提示:{S.RESET}\n{current}")
+            _write_line(f"\n{S.DIM}用法: /system <新的系统提示>{S.RESET}")
 
     elif cmd == "/export":
         content = _export_session(agent, session_id)
@@ -280,9 +314,9 @@ def handle_command(cmd_line: str, agent, session_id: str, config: dict,
             filename = f"paw_{session_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
             export_path = export_dir / filename
             export_path.write_text(content, encoding="utf-8")
-            console.print(f"[green]✅ 已导出: {export_path}[/]")
+            _write_line(f"{S.GREEN}✅ 已导出: {export_path}{S.RESET}")
         else:
-            console.print("[yellow]当前会话无内容[/]")
+            _write_line(f"{S.YELLOW}当前会话无内容{S.RESET}")
 
     elif cmd == "/tools":
         from paw.core.tools import get_all_tools
@@ -292,7 +326,7 @@ def handle_command(cmd_line: str, agent, session_id: str, config: dict,
         table.add_column("描述")
         for t in tools:
             table.add_row(t.name, t.description)
-        console.print(table)
+        _print(table)
 
     elif cmd == "/plugins":
         from paw.plugins import PLUGINS_DIR, discover_plugins, create_plugin_scaffold
@@ -301,42 +335,46 @@ def handle_command(cmd_line: str, agent, session_id: str, config: dict,
             name = Prompt.ask("插件名称", default="my_plugin")
             try:
                 path = create_plugin_scaffold(name)
-                console.print(f"[green]✅ 插件模板: {path}[/]")
+                _write_line(f"{S.GREEN}✅ 插件模板: {path}{S.RESET}")
             except FileExistsError:
-                console.print(f"[yellow]插件 {name} 已存在[/]")
+                _write_line(f"{S.YELLOW}插件 {name} 已存在{S.RESET}")
         elif args == "reload":
             results = _load_plugins(config)
             if results:
                 for n, r in results.items():
                     status = "✅" if r["tools"] and not r["errors"] else "❌"
-                    console.print(f"  {status} {n}: {r['tools']}")
+                    _write_line(f"  {status} {n}: {r['tools']}")
             else:
-                console.print("[dim]无插件[/]")
+                _write_line(f"{S.DIM}无插件{S.RESET}")
         else:
             plugin_files = discover_plugins()
-            console.print(f"[bold]插件目录:[/] {PLUGINS_DIR}")
+            _write_line(f"{S.BOLD}插件目录:{S.RESET} {PLUGINS_DIR}")
             if plugin_files:
                 for f in plugin_files:
-                    console.print(f"  📄 {f.name}")
+                    _write_line(f"  📄 {f.name}")
             else:
-                console.print("[dim]  (空)[/]")
-            console.print("\n[dim]/plugins init 创建模板 | /plugins reload 重载[/]")
+                _write_line(f"{S.DIM}  (空){S.RESET}")
+            _write_line(f"\n{S.DIM}/plugins init 创建模板 | /plugins reload 重载{S.RESET}")
 
     elif cmd == "/tokens":
         usage = agent.get_token_usage()
-        console.print(Panel(
-            f"Prompt tokens:     [cyan]{usage['prompt_tokens']}[/]\n"
-            f"Completion tokens: [cyan]{usage['completion_tokens']}[/]\n"
-            f"Total tokens:      [bold cyan]{usage['total_tokens']}[/]\n"
-            f"请求次数:          {usage['requests']}",
-            title="📊 Token 用量",
-            border_style="cyan",
-        ))
+        _write_line(f"""
+{S.BOLD_CYAN}📊 Token 用量{S.RESET}
+  Prompt tokens:     {S.CYAN}{usage['prompt_tokens']}{S.RESET}
+  Completion tokens: {S.CYAN}{usage['completion_tokens']}{S.RESET}
+  Total tokens:      {S.BOLD_CYAN}{usage['total_tokens']}{S.RESET}
+  请求次数:          {usage['requests']}
+""")
 
     else:
-        console.print(f"[yellow]❓ 未知命令: {cmd}[/]  [dim]输入 /help 查看帮助[/]")
+        _write_line(f"{S.YELLOW}❓ 未知命令: {cmd}{S.RESET}  {S.DIM}输入 /help 查看帮助{S.RESET}")
 
     return True, session_id, paw_input
+
+
+def _print_json(text: str):
+    """打印 JSON (用 Rich)"""
+    console.print_json(text)
 
 
 # ========== 主聊天循环 ==========
@@ -355,8 +393,8 @@ def chat(
     config = load_config()
 
     if not config["llm"].get("api_key"):
-        console.print("[red]❌ 未配置 API Key！[/]")
-        console.print(f"请运行 [cyan]paw init[/] 或编辑 [cyan]{CONFIG_FILE}[/]")
+        _write_line(f"{S.RED}❌ 未配置 API Key！{S.RESET}")
+        _write_line(f"请运行 {S.CYAN}paw init{S.RESET} 或编辑 {S.CYAN}{CONFIG_FILE}{S.RESET}")
         raise typer.Exit(1)
 
     if model:
@@ -374,7 +412,7 @@ def chat(
     if plugin_results:
         loaded = sum(1 for r in plugin_results.values() if r["tools"] and not r["errors"])
         if loaded:
-            console.print(f"[dim]🔌 已加载 {loaded} 个插件[/]")
+            _write_line(f"{S.DIM}🔌 已加载 {loaded} 个插件{S.RESET}")
 
     from paw.core.agent import Agent
     agent = Agent(config=config, session_id=session_id)
@@ -384,10 +422,10 @@ def chat(
     show_tokens = config.get("agent", {}).get("show_token_usage", True) and not no_tokens
 
     _print_banner()
-    console.print(
-        f"[dim]会话: {session_id} · "
+    _write_line(
+        f"{S.DIM}会话: {session_id} · "
         f"模型: {config['llm']['model']} · "
-        f"人格: {persona_info['emoji']} {persona_info['name']}[/]\n"
+        f"人格: {persona_info['emoji']} {persona_info['name']}{S.RESET}\n"
     )
 
     # 初始化智能输入
@@ -403,7 +441,7 @@ def chat(
                 get_sessions=lambda: agent.memory.get_sessions(),
             )
         except Exception as e:
-            console.print(f"[yellow]⚠️ 智能输入初始化失败: {e}，使用传统输入[/]")
+            _write_line(f"{S.YELLOW}⚠️ 智能输入初始化失败: {e}，使用传统输入{S.RESET}")
             use_tui = False
 
     try:
@@ -413,12 +451,13 @@ def chat(
                 if use_tui and paw_input:
                     user_input = paw_input.prompt()
                 else:
-                    user_input = console.input("[bold green]你 › [/]").strip()
+                    _write(f"{S.BOLD_GREEN}你 › {S.RESET}")
+                    user_input = input().strip()
             except KeyboardInterrupt:
-                console.print("\n[dim]再见 👋[/]")
+                _write_line(f"\n{S.DIM}再见 👋{S.RESET}")
                 break
             except EOFError:
-                console.print("\n[dim]再见 👋[/]")
+                _write_line(f"\n{S.DIM}再见 👋{S.RESET}")
                 break
 
             if not user_input:
@@ -431,13 +470,16 @@ def chat(
                         user_input, agent, session_id, config, paw_input
                     )
                 except SystemExit:
-                    console.print("[dim]再见 👋[/]")
+                    _write_line(f"{S.DIM}再见 👋{S.RESET}")
                     break
                 continue
 
             # ========== AI 对话 (流式) ==========
-            # 打印 AI 回复前缀
-            console.print("[bold cyan]🐾[/] ", end="")
+            # 关键: 流式输出全部用 sys.stdout.write，不混用 Rich
+            # 这样避免 ANSI 码冲突导致乱码
+
+            # AI 回复前缀
+            _write(f"\n{S.BOLD_CYAN}🐾{S.RESET} ")
 
             try:
                 async def _run():
@@ -446,9 +488,7 @@ def chat(
                     async for event in agent.chat_stream(user_input):
                         if event["type"] == "token":
                             full_text += event["content"]
-                            # 直接输出 token，保持流式
-                            sys.stdout.write(event["content"])
-                            sys.stdout.flush()
+                            _write(event["content"])
 
                         elif event["type"] == "tool_start":
                             name = event["name"]
@@ -456,22 +496,21 @@ def chat(
                             args_str = ", ".join(
                                 f"{k}={repr(v)[:40]}" for k, v in args.items()
                             )
-                            # 工具调用用灰色显示
-                            console.print(f"\n  [dim]🔧 {name}({args_str})[/]")
-                            console.print("[bold cyan]🐾[/] ", end="")
+                            _write(f"\n  {S.DIM}🔧 {name}({args_str}){S.RESET}")
+                            _write(f"\n{S.BOLD_CYAN}🐾{S.RESET} ")
 
                         elif event["type"] == "tool_result":
                             preview = event["result"][:80].replace("\n", " ")
-                            console.print(f"\n  [dim]   ✓ {preview}[/]")
-                            console.print("[bold cyan]🐾[/] ", end="")
+                            _write(f"\n  {S.DIM}   ✓ {preview}{S.RESET}")
+                            _write(f"\n{S.BOLD_CYAN}🐾{S.RESET} ")
 
                         elif event["type"] == "tool_error":
-                            console.print(f"\n  [red]   ✗ {event['error']}[/]")
-                            console.print("[bold cyan]🐾[/] ", end="")
+                            _write(f"\n  {S.RED}   ✗ {event['error']}{S.RESET}")
+                            _write(f"\n{S.BOLD_CYAN}🐾{S.RESET} ")
 
                         elif event["type"] == "round":
-                            console.print(f"\n  [dim]--- 第 {event['number']} 轮 ---[/]")
-                            console.print("[bold cyan]🐾[/] ", end="")
+                            _write(f"\n  {S.DIM}--- 第 {event['number']} 轮 ---{S.RESET}")
+                            _write(f"\n{S.BOLD_CYAN}🐾{S.RESET} ")
 
                         elif event["type"] == "done":
                             break
@@ -479,18 +518,18 @@ def chat(
                     return full_text
 
                 result = asyncio.run(_run())
-                console.print()  # 换行
+                _write_line()  # 换行
 
-                # 显示 token 用量
+                # Token 用量
                 if show_tokens:
-                    console.print(f"[dim]{agent.get_token_summary()}[/]")
+                    _write_line(f"{S.DIM}{agent.get_token_summary()}{S.RESET}")
 
-                console.print()  # 空行分隔
+                _write_line()  # 空行分隔
 
             except KeyboardInterrupt:
-                console.print("\n[yellow]⚡ 已中断[/]\n")
+                _write_line(f"\n{S.YELLOW}⚡ 已中断{S.RESET}\n")
             except Exception as e:
-                console.print(f"\n[red]❌ 错误: {e}[/]\n")
+                _write_line(f"\n{S.RED}❌ 错误: {e}{S.RESET}\n")
 
     finally:
         asyncio.run(agent.close())
@@ -502,14 +541,14 @@ def chat(
 def init():
     """初始化配置（新手引导）"""
     _print_banner()
-    console.print("\n[bold]🐾 欢迎使用 Paw！让我们来配置一下。\n[/]")
+    _write_line(f"\n{S.BOLD}🐾 欢迎使用 Paw！让我们来配置一下。\n{S.RESET}")
 
     from rich.prompt import Prompt
 
     config = DEFAULT_CONFIG.copy()
 
-    console.print("[bold]1. LLM API 配置[/]")
-    console.print("[dim]支持 OpenAI、DeepSeek、通义千问等 OpenAI 兼容 API[/]\n")
+    _write_line(f"{S.BOLD}1. LLM API 配置{S.RESET}")
+    _write_line(f"{S.DIM}支持 OpenAI、DeepSeek、通义千问等 OpenAI 兼容 API{S.RESET}\n")
 
     api_key = Prompt.ask("   API Key", password=True)
     config["llm"]["api_key"] = api_key
@@ -520,20 +559,20 @@ def init():
     model = Prompt.ask("   模型名称", default="gpt-4o-mini")
     config["llm"]["model"] = model
 
-    console.print("\n[bold]2. Agent 配置[/]")
+    _write_line(f"\n{S.BOLD}2. Agent 配置{S.RESET}")
     name = Prompt.ask("   给你的 Agent 起个名字", default="Paw")
     config["agent"]["name"] = name
 
-    console.print("\n[bold]3. 选择人格[/]")
+    _write_line(f"\n{S.BOLD}3. 选择人格{S.RESET}")
     _show_personas()
     persona_choice = Prompt.ask("   选择人格", default="default")
     if persona_choice in PERSONAS:
         p = get_persona(persona_choice)
         config["agent"]["system_prompt"] = p["system_prompt"]
         config["agent"]["_persona"] = persona_choice
-        console.print(f"   [green]已选择: {p['emoji']} {p['name']}[/]")
+        _write_line(f"   {S.GREEN}已选择: {p['emoji']} {p['name']}{S.RESET}")
 
-    console.print("\n[bold]4. Web UI 配置[/]")
+    _write_line(f"\n{S.BOLD}4. Web UI 配置{S.RESET}")
     port = Prompt.ask("   Web UI 端口", default="8765")
     config["web"]["port"] = int(port)
 
@@ -542,13 +581,13 @@ def init():
     from paw.plugins import PLUGINS_DIR
     PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
 
-    console.print(f"\n[green]✅ 配置已保存到 {CONFIG_FILE}[/]")
-    console.print(f"[green]✅ 插件目录: {PLUGINS_DIR}[/]")
-    console.print("\n[bold]现在可以开始使用了：[/]")
-    console.print("  [cyan]paw chat[/]              开始聊天")
-    console.print("  [cyan]paw chat -p coder[/]     以编程专家身份聊天")
-    console.print("  [cyan]paw web[/]               启动 Web UI")
-    console.print("  [cyan]paw --help[/]            查看所有命令\n")
+    _write_line(f"\n{S.GREEN}✅ 配置已保存到 {CONFIG_FILE}{S.RESET}")
+    _write_line(f"{S.GREEN}✅ 插件目录: {PLUGINS_DIR}{S.RESET}")
+    _write_line(f"\n{S.BOLD}现在可以开始使用了：{S.RESET}")
+    _write_line(f"  {S.CYAN}paw chat{S.RESET}              开始聊天")
+    _write_line(f"  {S.CYAN}paw chat -p coder{S.RESET}     以编程专家身份聊天")
+    _write_line(f"  {S.CYAN}paw web{S.RESET}               启动 Web UI")
+    _write_line(f"  {S.CYAN}paw --help{S.RESET}            查看所有命令\n")
 
 
 @app.command()
@@ -562,7 +601,7 @@ def web(
     config = load_config()
 
     if not config["llm"].get("api_key"):
-        console.print("[red]❌ 未配置 API Key！请运行 paw init[/]")
+        _write_line(f"{S.RED}❌ 未配置 API Key！请运行 paw init{S.RESET}")
         raise typer.Exit(1)
 
     web_host = host or config["web"].get("host", "127.0.0.1")
@@ -570,7 +609,7 @@ def web(
 
     _load_plugins(config)
 
-    console.print(Panel.fit(
+    _print(Panel.fit(
         f"[bold cyan]🐾 Paw Web UI[/]\n\n"
         f"访问地址: [link=http://{web_host}:{web_port}]http://{web_host}:{web_port}[/link]\n"
         f"[dim]按 Ctrl+C 停止[/]",
@@ -593,7 +632,7 @@ def config_show():
     if safe.get("llm", {}).get("api_key"):
         key = safe["llm"]["api_key"]
         safe["llm"]["api_key"] = key[:8] + "..." + key[-4:] if len(key) > 12 else "***"
-    console.print_json(json.dumps(safe, ensure_ascii=False, indent=2))
+    _print_json(json.dumps(safe, ensure_ascii=False, indent=2))
 
 
 @app.command()
@@ -607,7 +646,7 @@ def config_set(
     elif value.isdigit():
         value = int(value)
     update_config(key, value)
-    console.print(f"[green]✅ 已设置 {key} = {value}[/]")
+    _write_line(f"{S.GREEN}✅ 已设置 {key} = {value}{S.RESET}")
 
 
 @app.command()
@@ -623,9 +662,9 @@ def plugins(
         name = Prompt.ask("插件名称", default="my_plugin")
         try:
             path = create_plugin_scaffold(name)
-            console.print(f"[green]✅ 插件模板: {path}[/]")
+            _write_line(f"{S.GREEN}✅ 插件模板: {path}{S.RESET}")
         except FileExistsError:
-            console.print(f"[yellow]插件 {name} 已存在[/]")
+            _write_line(f"{S.YELLOW}插件 {name} 已存在{S.RESET}")
     elif action == "reload":
         config = load_config()
         results = _load_plugins(config)
@@ -633,26 +672,26 @@ def plugins(
             for name, r in results.items():
                 status = "✅" if r["tools"] and not r["errors"] else "❌"
                 tools_str = ", ".join(r["tools"]) if r["tools"] else "(无)"
-                errors_str = f" [red]{r['errors'][0]}[/]" if r["errors"] else ""
-                console.print(f"  {status} {name}: {tools_str}{errors_str}")
+                errors_str = f" {S.RED}{r['errors'][0]}{S.RESET}" if r["errors"] else ""
+                _write_line(f"  {status} {name}: {tools_str}{errors_str}")
         else:
-            console.print("[dim]无插件[/]")
+            _write_line(f"{S.DIM}无插件{S.RESET}")
     else:
         plugin_files = discover_plugins()
-        console.print(f"[bold]插件目录:[/] {PLUGINS_DIR}")
+        _write_line(f"{S.BOLD}插件目录:{S.RESET} {PLUGINS_DIR}")
         if plugin_files:
             for f in plugin_files:
-                console.print(f"  📄 {f.name}")
+                _write_line(f"  📄 {f.name}")
         else:
-            console.print("[dim]  (空)[/]")
-        console.print("\n[dim]paw plugins init  创建模板[/]")
-        console.print("[dim]paw plugins reload  重载[/]")
+            _write_line(f"{S.DIM}  (空){S.RESET}")
+        _write_line(f"\n{S.DIM}paw plugins init  创建模板{S.RESET}")
+        _write_line(f"{S.DIM}paw plugins reload  重载{S.RESET}")
 
 
 @app.command()
 def version():
     """显示版本"""
-    console.print(f"🐾 {__app_name__} v{__version__}")
+    _write_line(f"🐾 {__app_name__} v{__version__}")
 
 
 if __name__ == "__main__":

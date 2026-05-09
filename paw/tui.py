@@ -268,13 +268,14 @@ def get_bottom_toolbar(config: dict, session_id: str):
     persona = config.get('agent', {}).get('_persona', 'default')
     persona_info = PERSONAS.get(persona, PERSONAS['default'])
 
+    # 不在工具栏使用 emoji，避免编码问题
     return HTML(
-        f' <b>会话:</b> {session_id} '
-        f'│ <b>模型:</b> {model} '
-        f'│ <b>人格:</b> {persona_info["emoji"]} {persona_info["name"]} '
-        f'│ <b>Tab</b> 补全 '
-        f'│ <b>Ctrl+L</b> 清屏 '
-        f'│ <b>Ctrl+C</b> 中断'
+        f' <b>session:</b> {session_id} '
+        f'| <b>model:</b> {model} '
+        f'| <b>persona:</b> {persona_info["name"]} '
+        f'| <b>Tab</b> complete '
+        f'| <b>Ctrl+L</b> clear '
+        f'| <b>Ctrl+C</b> cancel'
     )
 
 
