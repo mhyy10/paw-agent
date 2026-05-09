@@ -1,9 +1,10 @@
-"""Paw CLI v6 - 参考 Hermes/Claude/Qwen 设计"""
+"""Paw CLI v7 - Spinner + Markdown 渲染 + 欢迎消息 + 优化"""
 
 import asyncio
 import sys
 import uuid
 import time
+import random
 from datetime import datetime
 from pathlib import Path
 
@@ -11,24 +12,24 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from rich.markdown import Markdown
+from rich.syntax import Syntax
+from rich.text import Text
 
 from paw import __version__, __app_name__
 from paw.config import load_config, save_config, update_config, CONFIG_FILE, DEFAULT_CONFIG
 from paw.personas import get_persona, list_personas, PERSONAS
 
 
-# ===== 颜色 (参考 Hermes 金色 + Qwen 紫蓝) =====
+# ===== 颜色 =====
 
 class C:
-    # 主色
-    ACCENT  = "\033[38;5;141m"   # 紫 (提示符/强调)
-    GOLD    = "\033[38;5;220m"   # 金 (标题/框线)
-    BLUE    = "\033[38;5;75m"    # 蓝 (AI 标签)
-    # 功能色
+    ACCENT  = "\033[38;5;141m"
+    GOLD    = "\033[38;5;220m"
+    BLUE    = "\033[38;5;75m"
     GREEN   = "\033[38;5;114m"
     RED     = "\033[38;5;203m"
     YELLOW  = "\033[38;5;221m"
-    # 中性色
     DIM     = "\033[2m"
     BOLD    = "\033[1m"
     RESET   = "\033[0m"
@@ -36,31 +37,27 @@ class C:
     LGRAY   = "\033[38;5;250m"
     WHITE   = "\033[38;5;255m"
     DARK    = "\033[38;5;238m"
-
-    # 组合
-    PROMPT  = "\033[1;38;5;141m"  # 粗紫
-    BORDER  = "\033[38;5;245m"    # 灰框线
-    TREE    = "\033[38;5;245m"    # 树线
+    PROMPT  = "\033[1;38;5;141m"
+    TREE    = "\033[38;5;245m"
 
 
 # 框线字符
 class B:
-    TL = '\u256d'  # ┌
-    TR = '\u256e'  # ┐
-    BL = '\u2570'  # └
-    BR = '\u256f'  # ┘
-    H  = '\u2500'  # ─
-    V  = '\u2502'  # │
-    ML = '\u251c'  # ├
-    MR = '\u2524'  # ┤
-    TT = '\u252c'  # ┬
-    BT = '\u2534'  # ┴
-    DOT = '\u25cf' # ●
-    RDOT = '\u25cb' # ○
-    ARROW = '\u276f' # ❯ (Hermes/Claude 风格)
+    TL = '\u256d'; TR = '\u256e'; BL = '\u2570'; BR = '\u256f'
+    H  = '\u2500'; V  = '\u2502'; ML = '\u251c'; MR = '\u2524'
+    ARROW = '\u276f'  # ❯
 
 
-# 输出
+# 欢迎消息
+WELCOME_MSGS = [
+    "Hi! What can I help you with?",
+    "Hello! Ready to help.",
+    "Hey! What are we working on?",
+    "Ready. What's the plan?",
+    "At your service. What do you need?",
+]
+
+
 app = typer.Typer(name="paw", help=f"{B.ARROW} Paw Agent", add_completion=False)
 console = Console(force_terminal=True)
 
@@ -68,60 +65,88 @@ def _w(t): sys.stdout.write(t); sys.stdout.flush()
 def _wl(t=""): _w(t + "\n")
 
 
-# ===== 状态栏 =====
-
-def _status_bar(model, persona, sid, elapsed=None):
-    """底部状态栏 - 参考 Hermes 风格"""
-    e = f" | {elapsed}" if elapsed else ""
-    bar = f"{C.DARK} {B.H * 60}{C.RESET}"
-    info = (f"{C.GRAY} {B.ARROW} {C.LGRAY}{model}{C.GRAY} | "
-            f"{C.LGRAY}{persona}{C.GRAY} | "
-            f"{C.LGRAY}{sid}{C.GRAY}{e} {C.RESET}")
-    _wl(bar)
-    _wl(info)
-
-
 # ===== 响应框 =====
 
-def _response_header():
-    """AI 响应框顶部 - 参考 Hermes ╭─ Paw ─╮"""
-    _wl(f"{C.GOLD}{C.BOLD}  {B.TL}{B.H} Paw {B.H * 50}{B.TR}{C.RESET}")
+def _box_top(label="Paw"):
+    """╭─ Paw ────────────╮"""
+    padding = max(1, 54 - len(label) - 1)
+    _wl(f"{C.GOLD}{C.BOLD}  {B.TL}{B.H} {label} {B.H * padding}{B.TR}{C.RESET}")
 
-def _response_footer():
-    """AI 响应框底部"""
-    _wl(f"{C.GOLD}  {B.BL}{B.H * 55}{B.BR}{C.RESET}")
+def _box_bottom():
+    """╰──────────────────╯"""
+    _wl(f"{C.GOLD}  {B.BL}{B.H * 57}{B.BR}{C.RESET}")
+
+def _box_line(text=""):
+    """│ content"""
+    _wl(f"  {C.TREE}{B.V}{C.RESET} {text}")
 
 
-# ===== 工具活动显示 =====
+# ===== Markdown 渲染 =====
+
+_rich_console = Console(force_terminal=True, width=55, no_color=False)
+
+def _render_markdown(text: str):
+    """用 Rich 渲染 Markdown，输出到终端"""
+    import io
+    buf = io.StringIO()
+    temp_console = Console(file=buf, force_terminal=True, width=55, no_color=False)
+    md = Markdown(text, code_theme="monokai")
+    temp_console.print(md)
+    output = buf.getvalue()
+    # 每行加左侧树线前缀
+    for line in output.rstrip('\n').split('\n'):
+        _wl(f"  {C.TREE}{B.V}{C.RESET} {line}")
+
+
+# ===== 工具显示 =====
 
 def _tool_start(name, args):
-    """工具调用开始 - 参考 Hermes ┊ style"""
     a = ", ".join(f"{k}={repr(v)[:25]}" for k,v in args.items())
     _wl(f"  {C.TREE}{B.V}{C.RESET} {C.YELLOW}{B.ARROW}{C.RESET} {C.WHITE}{name}{C.RESET} {C.GRAY}({a}){C.RESET}")
 
-def _tool_done(name, result, duration=None):
-    """工具调用完成"""
-    d = f" {C.GRAY}({duration:.1f}s){C.RESET}" if duration else ""
+def _tool_done(name, result, elapsed=None):
+    d = f" {C.GRAY}{elapsed:.1f}s{C.RESET}" if elapsed else ""
     preview = result[:60].replace("\n", " ")
     _wl(f"  {C.TREE}{B.ML}{B.H}{C.RESET} {C.GREEN}ok{C.RESET} {C.GRAY}{preview}{C.RESET}{d}")
 
 def _tool_error(name, error):
-    """工具调用失败"""
     _wl(f"  {C.TREE}{B.ML}{B.H}{C.RESET} {C.RED}err{C.RESET} {C.RED}{error}{C.RESET}")
 
 def _round_marker(n):
-    """轮次标记"""
-    _wl(f"  {C.TREE}{B.V}{C.RESET} {C.DIM}round {n}{C.RESET}")
+    _wl(f"  {C.TREE}{B.V}{C.RESET} {C.DIM}--- round {n} ---{C.RESET}")
 
 
-# ===== 显示函数 =====
+# ===== 状态栏 =====
+
+def _status_bar(model, persona, sid, elapsed=None, tokens=None):
+    e = f" | {elapsed:.1f}s" if elapsed else ""
+    t = f" | {tokens} tok" if tokens else ""
+    _wl(f"{C.DARK} {B.H * 60}{C.RESET}")
+    _wl(f"{C.GRAY} {B.ARROW} {C.LGRAY}{model}{C.GRAY} | {C.LGRAY}{persona}{C.GRAY} | {C.LGRAY}{sid}{C.GRAY}{e}{t} {C.RESET}")
+
+
+# ===== Banner =====
 
 def _banner():
     console.print(Panel.fit(
         f"[bold]{B.ARROW} {__app_name__}[/] [dim]v{__version__}[/]\n"
-        "[dim]Tab complete | Up/Down history | Ctrl+L clear | /help[/]",
+        "[dim]Tab complete | Up/Down history | /help[/]",
         border_style="bright_black",
     ))
+
+
+# ===== 欢迎消息 =====
+
+def _welcome(persona_name):
+    """新会话欢迎消息"""
+    msg = random.choice(WELCOME_MSGS)
+    _box_top(persona_name)
+    _box_line(f"{C.LGRAY}{msg}{C.RESET}")
+    _box_bottom()
+    _wl()
+
+
+# ===== 命令 =====
 
 def _help():
     _wl(f"""
@@ -150,12 +175,9 @@ def _show_sessions(memory, cur_id):
         _wl(f"  {C.DIM}no sessions{C.RESET}")
         return
     t = Table(show_lines=False, border_style="bright_black", padding=(0,1))
-    t.add_column("", width=2)
-    t.add_column("id", style="cyan")
-    t.add_column("title", max_width=35)
-    t.add_column("persona")
-    t.add_column("msgs", justify="right")
-    t.add_column("last active")
+    t.add_column("", width=2); t.add_column("id", style="cyan")
+    t.add_column("title", max_width=35); t.add_column("persona")
+    t.add_column("msgs", justify="right"); t.add_column("last active")
     for s in sessions:
         sid = s["session_id"]
         arrow = B.ARROW if sid == cur_id else ""
@@ -166,16 +188,12 @@ def _show_sessions(memory, cur_id):
 
 def _show_personas():
     t = Table(show_lines=False, border_style="bright_black", padding=(0,1))
-    t.add_column("id", style="cyan")
-    t.add_column("name")
-    t.add_column("description")
+    t.add_column("id", style="cyan"); t.add_column("name"); t.add_column("description")
     for p in list_personas():
         t.add_row(p["key"], p["name"], p["description"])
     console.print(t)
     _wl(f"  {C.DIM}/persona <id> to switch{C.RESET}")
 
-
-# ===== 命令处理 =====
 
 def _cmd(line, agent, sid, config, tui):
     parts = line.split(maxsplit=1)
@@ -339,7 +357,11 @@ def chat(
 
     _banner()
     _status_bar(config["llm"]["model"], pi["name"], sid)
-    _wl()
+
+    # 欢迎消息
+    is_new = not agent.memory.get_messages(sid, limit=1)
+    if is_new:
+        _welcome(pi["name"])
 
     tui = None
     if not no_tui:
@@ -347,7 +369,7 @@ def chat(
             from paw.tui import PawInput
             tui = PawInput(config=config, session_id=sid, get_sessions=lambda: agent.memory.get_sessions())
         except Exception as e:
-            _wl(f"  {C.YELLOW}tui failed: {e}{C.RESET}")
+            _wl(f"  {C.YELLOW}tui: {e}{C.RESET}")
 
     try:
         while True:
@@ -374,48 +396,83 @@ def chat(
 
             # ===== AI 响应 =====
             t0 = time.time()
-            _response_header()
-            _w(f"  {C.TREE}{B.V}{C.RESET} ")  # 内容左树线
+
+            # 用户输入框
+            _box_top("You")
+            _box_line(f"{C.WHITE}{user_input}{C.RESET}")
+            _box_bottom()
+
+            # Spinner (等待首个 token)
+            from paw.spinner import Spinner
+            spin = Spinner("thinking")
+            spin.start()
+            first_token = True
+
+            # 响应框
+            full_text = ""
+            need_prefix = True
 
             try:
                 async def _run():
-                    full = ""
-                    need_prefix = False
+                    nonlocal full_text, first_token, need_prefix
                     async for ev in agent.chat_stream(user_input):
                         if ev["type"] == "token":
+                            if first_token:
+                                spin.stop()
+                                first_token = False
+                                _box_top("Paw")
                             if need_prefix:
                                 _w(f"  {C.TREE}{B.V}{C.RESET} ")
                                 need_prefix = False
-                            full += ev["content"]
+                            full_text += ev["content"]
                             _w(ev["content"])
+
                         elif ev["type"] == "tool_start":
-                            _wl()  # 换行
+                            if first_token:
+                                spin.stop()
+                                first_token = False
+                                _box_top("Paw")
+                            _wl()
                             _tool_start(ev["name"], ev["args"])
                             need_prefix = True
+
                         elif ev["type"] == "tool_result":
                             _tool_done(ev["name"], ev["result"])
                             need_prefix = True
+
                         elif ev["type"] == "tool_error":
                             _tool_error(ev["name"], ev["error"])
                             need_prefix = True
+
                         elif ev["type"] == "round":
                             _round_marker(ev["number"])
                             need_prefix = True
+
                         elif ev["type"] == "done":
                             break
-                    return full
+
                 asyncio.run(_run())
+
+                # 确保 spinner 停止
+                if first_token:
+                    spin.stop()
+
                 _wl()  # 换行
-                _response_footer()
+                _box_bottom()
 
                 elapsed = time.time() - t0
                 if show_tk:
                     u = agent.get_token_usage()
                     _wl(f"  {C.DIM}{B.ARROW} {u['total_tokens']} tokens | {elapsed:.1f}s{C.RESET}")
                 _wl()
+
             except KeyboardInterrupt:
+                if not first_token:
+                    spin.stop()
                 _wl(f"\n  {C.YELLOW}{B.ARROW} interrupted{C.RESET}\n")
             except Exception as e:
+                if not first_token:
+                    spin.stop()
                 _wl(f"\n  {C.RED}{B.ARROW} error: {e}{C.RESET}\n")
     finally:
         asyncio.run(agent.close())
