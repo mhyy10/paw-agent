@@ -34,6 +34,7 @@ from paw.personas import PERSONAS, list_personas
 PAW_STYLE = Style.from_dict({
     # 提示符 - 紫色粗箭头
     'prompt': 'bold #8b5cf6',
+    'border': '#64748b',
     # 补全菜单
     'completion-menu.completion': 'bg:#1e293b #e2e8f0',
     'completion-menu.completion.current': 'bg:#0ea5e9 #ffffff bold',
@@ -324,19 +325,40 @@ class PawInput:
         )
 
     def prompt(self, message: str = None) -> str:
-        """显示输入提示，返回用户输入"""
-        if message is None:
-            message = [('class:prompt', '  > ')]
+        """显示输入提示，带输入框"""
+        import sys
+
+        # 框线字符
+        tl, tr, bl, br = '\u256d', '\u256e', '\u2570', '\u256f'  # ┌ ┐ └ ┘
+        h, v = '\u2500', '\u2502'  # ─ │
+        width = 60
+
+        # 打印输入框上边框
+        sys.stdout.write(f"\033[38;5;245m  {tl}{h * width}{tr}\033[0m\n")
+        sys.stdout.flush()
+
+        # prompt 内容: 左边框 + 提示符
+        prompt_msg = [
+            ('class:border', f'  {v} '),
+            ('class:prompt', '> '),
+        ]
 
         try:
             result = self.session.prompt(
-                message,
+                prompt_msg,
                 bottom_toolbar=get_bottom_toolbar(self.config, self.session_id),
             )
+            # 打印输入框下边框
+            sys.stdout.write(f"\033[38;5;245m  {bl}{h * width}{br}\033[0m\n")
+            sys.stdout.flush()
             return result.strip()
         except KeyboardInterrupt:
+            sys.stdout.write(f"\033[38;5;245m  {bl}{h * width}{br}\033[0m\n")
+            sys.stdout.flush()
             raise
         except EOFError:
+            sys.stdout.write(f"\033[38;5;245m  {bl}{h * width}{br}\033[0m\n")
+            sys.stdout.flush()
             raise
 
     def update_session_id(self, session_id: str):
