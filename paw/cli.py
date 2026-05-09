@@ -1,8 +1,7 @@
-"""Paw CLI v5 - 修复乱码 + emoji 降级"""
+"""Paw CLI v5 - 纯 ASCII 输出，无 emoji"""
 
 import asyncio
 import sys
-import os
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -17,63 +16,9 @@ from paw import __version__, __app_name__
 from paw.config import load_config, save_config, update_config, CONFIG_FILE, DEFAULT_CONFIG
 from paw.personas import get_persona, list_personas, PERSONAS
 
-# ========== 编码检测 + emoji 降级 ==========
-
-def _supports_emoji() -> bool:
-    """检测终端是否支持 emoji 输出"""
-    # 1. 检查 stdout 编码 — 必须是 UTF-8
-    encoding = getattr(sys.stdout, 'encoding', None) or 'ascii'
-    if encoding.lower().replace('-', '') not in ('utf8', 'utf16', 'utf32'):
-        return False
-
-    # 2. 检查 LANG/LC_ALL 环境变量
-    lang = os.environ.get('LANG', '')
-    lc_all = os.environ.get('LC_ALL', '')
-    for var in (lang, lc_all):
-        if var and 'utf' not in var.lower() and 'UTF' not in var:
-            return False
-
-    # 3. 检查是否是已知不支持 emoji 的终端
-    term = os.environ.get('TERM', '')
-    wt_session = os.environ.get('WT_SESSION', '')  # Windows Terminal
-    # Windows Terminal / iTerm2 / modern terminals support emoji
-    # Basic xterm / dumb terminals don't
-    if term in ('dumb', 'linux', 'screen'):
-        return False
-
-    # 4. Windows: 检查 code page
-    if sys.platform == 'win32':
-        try:
-            import ctypes
-            cp = ctypes.windll.kernel32.GetConsoleOutputCP()
-            if cp not in (65001, 65000):  # UTF-8 or UTF-7
-                return False
-        except Exception:
-            return False
-
-    # 5. 安全的写入测试 — 用 \r 覆盖，不留痕迹
-    if sys.stdout.isatty():
-        try:
-            sys.stdout.buffer.write(b'\xf0\x9f\x90\xbe')  # 🐾 in UTF-8
-            sys.stdout.buffer.write(b'\r')
-            sys.stdout.buffer.write(b'  ')
-            sys.stdout.buffer.write(b'\r')
-            sys.stdout.buffer.flush()
-            return True
-        except (UnicodeEncodeError, UnicodeDecodeError, OSError):
-            return False
-
-    # 非 TTY (管道/重定向) — 假设支持 UTF-8
-    return True
-
-
-# 检测一次，全局使用。可通过 PAW_NO_EMOJI=1 强制禁用 emoji
-_EMOJI_OK = not (os.environ.get('PAW_NO_EMOJI', '').strip() in ('1', 'true', 'yes'))
-if _EMOJI_OK:
-    _EMOJI_OK = _supports_emoji()
 
 class S:
-    """ANSI 样式 + 符号降级"""
+    """ANSI 样式 + ASCII 符号"""
     RESET = "\033[0m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
@@ -88,21 +33,19 @@ class S:
     BOLD_CYAN = "\033[1;36m"
     BOLD_GREEN = "\033[1;32m"
     DIM_CYAN = "\033[2;36m"
-    BRIGHT_BLACK = "\033[90m"
 
-    # 符号: emoji 或 ASCII 降级
-    PAW = "🐾" if _EMOJI_OK else ">>"
-    CHECK = "✅" if _EMOJI_OK else "[OK]"
-    CROSS = "❌" if _EMOJI_OK else "[X]"
-    WARN = "⚠️ " if _EMOJI_OK else "[!]"
-    WRENCH = "🔧" if _EMOJI_OK else "[tool]"
-    FOLDER = "📁" if _EMOJI_OK else "[dir]"
-    FILE = "📄" if _EMOJI_OK else "[file]"
-    CHART = "📊" if _EMOJI_OK else "[#]"
-    TRASH = "🗑️ " if _EMOJI_OK else "[del]"
-    LIGHTNING = "⚡" if _EMOJI_OK else ">>"
-    PLUG = "🔌" if _EMOJI_OK else "[plug]"
-    ARROW = "▶" if _EMOJI_OK else ">"
+    # ASCII 符号
+    PAW = ">>"
+    CHECK = "[OK]"
+    CROSS = "[X]"
+    WARN = "[!]"
+    WRENCH = "[tool]"
+    FOLDER = "[dir]"
+    FILE = "[file]"
+    CHART = "[#]"
+    TRASH = "[del]"
+    PLUG = "[plug]"
+    ARROW = ">"
 
 
 # ========== 输出函数 ==========
@@ -203,8 +146,7 @@ def _show_personas():
     table.add_column("名称")
     table.add_column("描述")
     for p in list_personas():
-        emoji = p["emoji"] if _EMOJI_OK else ""
-        table.add_row(p["key"], emoji, p["name"], p["description"])
+        table.add_row(p["key"], "", p["name"], p["description"])
     _print(table)
     _write_line(f"{S.DIM}使用 /persona <id> 切换人格{S.RESET}")
 
@@ -343,8 +285,7 @@ def handle_command(cmd_line: str, agent, session_id: str, config: dict,
                 agent.system_prompt = p["system_prompt"]
                 if paw_input:
                     paw_input.update_config(config)
-                emoji = p['emoji'] if _EMOJI_OK else ''
-                _write_line(f"{S.GREEN}{S.CHECK} 人格已切换: {emoji} {p['name']}{S.RESET} {S.DIM}- {p['description']}{S.RESET}")
+                _write_line(f"{S.GREEN}{S.CHECK} 人格已切换: {p['name']}{S.RESET} {S.DIM}- {p['description']}{S.RESET}")
             else:
                 _write_line(f"{S.RED}{S.CROSS} 未知人格: {pname}{S.RESET}")
                 _show_personas()
@@ -499,251 +440,3 @@ def chat(
             _write_line(f"{S.WARN}智能输入初始化失败: {e}，使用传统输入")
             use_tui = False
 
-    try:
-        while True:
-            # ========== 获取输入 ==========
-            try:
-                if use_tui and paw_input:
-                    user_input = paw_input.prompt()
-                else:
-                    _write(f"{S.BOLD_GREEN}你 > {S.RESET}")
-                    user_input = input().strip()
-            except KeyboardInterrupt:
-                _write_line(f"\n{S.DIM}再见{S.RESET}")
-                break
-            except EOFError:
-                _write_line(f"\n{S.DIM}再见{S.RESET}")
-                break
-
-            if not user_input:
-                continue
-
-            # ========== 处理命令 ==========
-            if user_input.startswith("/"):
-                try:
-                    _, session_id, paw_input = handle_command(
-                        user_input, agent, session_id, config, paw_input
-                    )
-                except SystemExit:
-                    _write_line(f"{S.DIM}再见{S.RESET}")
-                    break
-                continue
-
-            # ========== AI 对话 (流式) ==========
-            _write(f"\n{S.BOLD_CYAN}{S.PAW}{S.RESET} ")
-
-            try:
-                async def _run():
-                    full_text = ""
-
-                    async for event in agent.chat_stream(user_input):
-                        if event["type"] == "token":
-                            full_text += event["content"]
-                            _write(event["content"])
-
-                        elif event["type"] == "tool_start":
-                            name = event["name"]
-                            args = event["args"]
-                            args_str = ", ".join(
-                                f"{k}={repr(v)[:40]}" for k, v in args.items()
-                            )
-                            _write(f"\n  {S.DIM}{S.WRENCH} {name}({args_str}){S.RESET}")
-                            _write(f"\n{S.BOLD_CYAN}{S.PAW}{S.RESET} ")
-
-                        elif event["type"] == "tool_result":
-                            preview = event["result"][:80].replace("\n", " ")
-                            _write(f"\n  {S.DIM}   {S.CHECK} {preview}{S.RESET}")
-                            _write(f"\n{S.BOLD_CYAN}{S.PAW}{S.RESET} ")
-
-                        elif event["type"] == "tool_error":
-                            _write(f"\n  {S.RED}   {S.CROSS} {event['error']}{S.RESET}")
-                            _write(f"\n{S.BOLD_CYAN}{S.PAW}{S.RESET} ")
-
-                        elif event["type"] == "round":
-                            _write(f"\n  {S.DIM}--- 第 {event['number']} 轮 ---{S.RESET}")
-                            _write(f"\n{S.BOLD_CYAN}{S.PAW}{S.RESET} ")
-
-                        elif event["type"] == "done":
-                            break
-
-                    return full_text
-
-                result = asyncio.run(_run())
-                _write_line()
-
-                if show_tokens:
-                    _write_line(f"{S.DIM}{agent.get_token_summary()}{S.RESET}")
-
-                _write_line()
-
-            except KeyboardInterrupt:
-                _write_line(f"\n{S.YELLOW}{S.LIGHTNING} 已中断{S.RESET}\n")
-            except Exception as e:
-                _write_line(f"\n{S.RED}{S.CROSS} 错误: {e}{S.RESET}\n")
-
-    finally:
-        asyncio.run(agent.close())
-
-
-# ========== 其他命令 ==========
-
-@app.command()
-def init():
-    """初始化配置（新手引导）"""
-    _print_banner()
-    _write_line(f"\n{S.BOLD}{S.PAW} 欢迎使用 Paw！让我们来配置一下。\n{S.RESET}")
-
-    from rich.prompt import Prompt
-
-    config = DEFAULT_CONFIG.copy()
-
-    _write_line(f"{S.BOLD}1. LLM API 配置{S.RESET}")
-    _write_line(f"{S.DIM}支持 OpenAI、DeepSeek、通义千问等 OpenAI 兼容 API{S.RESET}\n")
-
-    api_key = Prompt.ask("   API Key", password=True)
-    config["llm"]["api_key"] = api_key
-
-    base_url = Prompt.ask("   API Base URL", default="https://api.openai.com/v1")
-    config["llm"]["base_url"] = base_url
-
-    model = Prompt.ask("   模型名称", default="gpt-4o-mini")
-    config["llm"]["model"] = model
-
-    _write_line(f"\n{S.BOLD}2. Agent 配置{S.RESET}")
-    name = Prompt.ask("   给你的 Agent 起个名字", default="Paw")
-    config["agent"]["name"] = name
-
-    _write_line(f"\n{S.BOLD}3. 选择人格{S.RESET}")
-    _show_personas()
-    persona_choice = Prompt.ask("   选择人格", default="default")
-    if persona_choice in PERSONAS:
-        p = get_persona(persona_choice)
-        config["agent"]["system_prompt"] = p["system_prompt"]
-        config["agent"]["_persona"] = persona_choice
-        emoji = p['emoji'] if _EMOJI_OK else ''
-        _write_line(f"   {S.GREEN}{S.CHECK} 已选择: {emoji} {p['name']}{S.RESET}")
-
-    _write_line(f"\n{S.BOLD}4. Web UI 配置{S.RESET}")
-    port = Prompt.ask("   Web UI 端口", default="8765")
-    config["web"]["port"] = int(port)
-
-    save_config(config)
-
-    from paw.plugins import PLUGINS_DIR
-    PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
-
-    _write_line(f"\n{S.GREEN}{S.CHECK} 配置已保存到 {CONFIG_FILE}{S.RESET}")
-    _write_line(f"{S.GREEN}{S.CHECK} 插件目录: {PLUGINS_DIR}{S.RESET}")
-    _write_line(f"\n{S.BOLD}现在可以开始使用了：{S.RESET}")
-    _write_line(f"  {S.CYAN}paw chat{S.RESET}              开始聊天")
-    _write_line(f"  {S.CYAN}paw chat -p coder{S.RESET}     以编程专家身份聊天")
-    _write_line(f"  {S.CYAN}paw web{S.RESET}               启动 Web UI")
-    _write_line(f"  {S.CYAN}paw --help{S.RESET}            查看所有命令\n")
-
-
-@app.command()
-def web(
-    host: str = typer.Option(None, "--host", "-h", help="监听地址"),
-    port: int = typer.Option(None, "--port", "-p", help="监听端口"),
-):
-    """启动 Web UI"""
-    import paw.tools.builtin
-
-    config = load_config()
-
-    if not config["llm"].get("api_key"):
-        _write_line(f"{S.RED}{S.CROSS} 未配置 API Key！请运行 paw init{S.RESET}")
-        raise typer.Exit(1)
-
-    web_host = host or config["web"].get("host", "127.0.0.1")
-    web_port = port or config["web"].get("port", 8765)
-
-    _load_plugins(config)
-
-    _print(Panel.fit(
-        f"[bold cyan]{S.PAW} Paw Web UI[/]\n\n"
-        f"访问地址: [link=http://{web_host}:{web_port}]http://{web_host}:{web_port}[/link]\n"
-        f"[dim]按 Ctrl+C 停止[/]",
-        border_style="cyan",
-    ))
-
-    from paw.web.app import create_app
-    import uvicorn
-
-    app_instance = create_app(config)
-    uvicorn.run(app_instance, host=web_host, port=web_port, log_level="warning")
-
-
-@app.command()
-def config_show():
-    """查看当前配置"""
-    import json
-    cfg = load_config()
-    safe = dict(cfg)
-    if safe.get("llm", {}).get("api_key"):
-        key = safe["llm"]["api_key"]
-        safe["llm"]["api_key"] = key[:8] + "..." + key[-4:] if len(key) > 12 else "***"
-    _print_json(json.dumps(safe, ensure_ascii=False, indent=2))
-
-
-@app.command()
-def config_set(
-    key: str = typer.Argument(..., help="配置键（如 llm.model）"),
-    value: str = typer.Argument(..., help="配置值"),
-):
-    """修改配置项"""
-    if value.lower() in ("true", "false"):
-        value = value.lower() == "true"
-    elif value.isdigit():
-        value = int(value)
-    update_config(key, value)
-    _write_line(f"{S.GREEN}{S.CHECK} 已设置 {key} = {value}{S.RESET}")
-
-
-@app.command()
-def plugins(
-    action: str = typer.Argument("list", help="操作: list / init / reload"),
-):
-    """管理插件"""
-    from paw.plugins import PLUGINS_DIR, discover_plugins, create_plugin_scaffold
-    import paw.tools.builtin
-
-    if action == "init":
-        from rich.prompt import Prompt
-        name = Prompt.ask("插件名称", default="my_plugin")
-        try:
-            path = create_plugin_scaffold(name)
-            _write_line(f"{S.GREEN}{S.CHECK} 插件模板: {path}{S.RESET}")
-        except FileExistsError:
-            _write_line(f"{S.YELLOW}插件 {name} 已存在{S.RESET}")
-    elif action == "reload":
-        config = load_config()
-        results = _load_plugins(config)
-        if results:
-            for name, r in results.items():
-                status = S.CHECK if r["tools"] and not r["errors"] else S.CROSS
-                tools_str = ", ".join(r["tools"]) if r["tools"] else "(无)"
-                errors_str = f" {S.RED}{r['errors'][0]}{S.RESET}" if r["errors"] else ""
-                _write_line(f"  {status} {name}: {tools_str}{errors_str}")
-        else:
-            _write_line(f"{S.DIM}无插件{S.RESET}")
-    else:
-        plugin_files = discover_plugins()
-        _write_line(f"{S.BOLD}插件目录:{S.RESET} {PLUGINS_DIR}")
-        if plugin_files:
-            for f in plugin_files:
-                _write_line(f"  {S.FILE} {f.name}")
-        else:
-            _write_line(f"{S.DIM}  (空){S.RESET}")
-        _write_line(f"\n{S.DIM}paw plugins init  创建模板{S.RESET}")
-        _write_line(f"{S.DIM}paw plugins reload  重载{S.RESET}")
-
-
-@app.command()
-def version():
-    """显示版本"""
-    _write_line(f"{S.PAW} {__app_name__} v{__version__}")
-
-
-if __name__ == "__main__":
-    app()

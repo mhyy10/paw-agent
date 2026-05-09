@@ -27,7 +27,7 @@ class TokenUsage:
     def summary(self) -> str:
         """返回用量摘要"""
         return (
-            f"📊 Tokens: {self.total_tokens} "
+            f"[#] Tokens: {self.total_tokens} "
             f"(prompt: {self.prompt_tokens}, completion: {self.completion_tokens}) "
             f"| 请求次数: {self.requests}"
         )
@@ -249,7 +249,7 @@ class LLMClient:
                 last_error = e
                 if e.response.status_code in (429, 500, 502, 503, 504) and attempt < self.max_retries - 1:
                     wait = (2 ** attempt) * 1.0
-                    yield {"type": "token", "content": f"\n⚠️ API 错误 ({e.response.status_code})，{wait}s 后重试...\n"}
+                    yield {"type": "token", "content": f"\n[!] API 错误 ({e.response.status_code})，{wait}s 后重试...\n"}
                     await asyncio.sleep(wait)
                     tool_calls_acc.clear()  # 重置工具调用状态
                     continue
@@ -258,7 +258,7 @@ class LLMClient:
                 last_error = e
                 if attempt < self.max_retries - 1:
                     wait = (2 ** attempt) * 1.0
-                    yield {"type": "token", "content": f"\n⚠️ 连接失败，{wait}s 后重试...\n"}
+                    yield {"type": "token", "content": f"\n[!] 连接失败，{wait}s 后重试...\n"}
                     await asyncio.sleep(wait)
                     tool_calls_acc.clear()
                     continue
@@ -268,3 +268,4 @@ class LLMClient:
 
     async def close(self):
         await self._client.aclose()
+

@@ -75,7 +75,7 @@ def create_app(config: dict = None) -> FastAPI:
         try:
             await ws.send_json({
                 "type": "system",
-                "content": f"🐾 {config.get('agent', {}).get('name', 'Paw')} 已连接 · 会话 {session_id}",
+                "content": f">> {config.get('agent', {}).get('name', 'Paw')} 已连接 · 会话 {session_id}",
             })
 
             while True:
@@ -158,7 +158,7 @@ def create_app(config: dict = None) -> FastAPI:
                         agent.session_id = new_sid
                         await ws.send_json({
                             "type": "system",
-                            "content": f"✅ 已切换到会话 {new_sid}",
+                            "content": f"[OK] 已切换到会话 {new_sid}",
                         })
                     else:
                         await ws.send_json({
@@ -172,7 +172,7 @@ def create_app(config: dict = None) -> FastAPI:
                     agent.session_id = session_id
                     await ws.send_json({
                         "type": "system",
-                        "content": f"✅ 新会话: {session_id}",
+                        "content": f"[OK] 新会话: {session_id}",
                         "session_id": session_id,
                     })
 
@@ -278,25 +278,25 @@ def _handle_command(cmd: str, agent, session_id: str, config: dict = None) -> st
 
     if command == "/clear":
         agent.memory.clear_session(session_id)
-        return "🗑️ 会话已清空"
+        return "[del] 会话已清空"
 
     elif command == "/new":
         import uuid as uuid_mod
         old_id = session_id
         new_id = str(uuid_mod.uuid4())[:8]
         agent.session_id = new_id
-        return f"✅ 新会话: {new_id} (旧会话 {old_id} 已保留)"
+        return f"[OK] 新会话: {new_id} (旧会话 {old_id} 已保留)"
 
     elif command == "/model":
         if args:
             agent.llm.model = args
-            return f"✅ 模型已切换: {args}"
+            return f"[OK] 模型已切换: {args}"
         return f"当前模型: {agent.llm.model}"
 
     elif command == "/system":
         if args:
             agent.system_prompt = args
-            return f"✅ 系统提示已更新"
+            return f"[OK] 系统提示已更新"
         current = agent.system_prompt or "(未设置)"
         return f"当前系统提示:\n{current}\n\n用法: /system <新的系统提示>"
 
@@ -310,8 +310,8 @@ def _handle_command(cmd: str, agent, session_id: str, config: dict = None) -> st
                 if config:
                     config["agent"]["system_prompt"] = p["system_prompt"]
                     config["agent"]["_persona"] = pname
-                return f"✅ 人格已切换: {p['emoji']} {p['name']} - {p['description']}"
-            return f"❌ 未知人格: {pname}"
+                return f"[OK] 人格已切换: {p['emoji']} {p['name']} - {p['description']}"
+            return f"[X] 未知人格: {pname}"
         from paw.personas import list_personas
         personas = list_personas()
         return "可用人格:\n" + "\n".join(
@@ -321,7 +321,7 @@ def _handle_command(cmd: str, agent, session_id: str, config: dict = None) -> st
     elif command == "/tokens":
         usage = agent.get_token_usage()
         return (
-            f"📊 Token 用量:\n"
+            f"[#] Token 用量:\n"
             f"  Prompt: {usage['prompt_tokens']}\n"
             f"  Completion: {usage['completion_tokens']}\n"
             f"  Total: {usage['total_tokens']}\n"
@@ -341,3 +341,4 @@ def _handle_command(cmd: str, agent, session_id: str, config: dict = None) -> st
         )
 
     return f"未知命令: {command}"
+

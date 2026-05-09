@@ -3,7 +3,7 @@
 PERSONAS = {
     "default": {
         "name": "Paw",
-        "emoji": "🐾",
+        "emoji": ">>",
         "description": "通用助手，简洁准确",
         "system_prompt": (
             "你是 Paw，一个有用的 AI 助手。你可以帮助用户完成各种任务，"
@@ -13,7 +13,7 @@ PERSONAS = {
     },
     "coder": {
         "name": "Coder",
-        "emoji": "💻",
+        "emoji": "",
         "description": "编程专家，专注代码",
         "system_prompt": (
             "你是一个专业的编程助手。你精通 Python、JavaScript、Go、Rust 等主流语言，"
@@ -27,7 +27,7 @@ PERSONAS = {
     },
     "teacher": {
         "name": "Teacher",
-        "emoji": "📚",
+        "emoji": "",
         "description": "耐心教学，循序渐进",
         "system_prompt": (
             "你是一位耐心的老师。你的目标是帮助用户理解概念，而不仅仅是给答案。\n"
@@ -41,7 +41,7 @@ PERSONAS = {
     },
     "creative": {
         "name": "Creative",
-        "emoji": "🎨",
+        "emoji": "",
         "description": "创意写作，脑洞大开",
         "system_prompt": (
             "你是一个充满创意的写作助手。你擅长：\n"
@@ -54,7 +54,7 @@ PERSONAS = {
     },
     "analyst": {
         "name": "Analyst",
-        "emoji": "📊",
+        "emoji": "[#]",
         "description": "数据分析，逻辑推理",
         "system_prompt": (
             "你是一个数据分析师和逻辑推理专家。你擅长：\n"
@@ -67,7 +67,7 @@ PERSONAS = {
     },
     "translator": {
         "name": "Translator",
-        "emoji": "🌍",
+        "emoji": "",
         "description": "多语言翻译，地道表达",
         "system_prompt": (
             "你是一个专业的多语言翻译助手。你精通中文、英文、日文、韩文等。\n"
@@ -98,3 +98,4 @@ def list_personas() -> list:
             "description": p["description"],
         })
     return result
+

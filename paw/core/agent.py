@@ -219,7 +219,7 @@ class Agent:
                     "content": result,
                 })
 
-        yield {"type": "token", "content": "\n⚠️ 达到工具调用上限，请简化你的请求。"}
+        yield {"type": "token", "content": "\n[!] 达到工具调用上限，请简化你的请求。"}
         yield {"type": "done"}
 
     def get_token_usage(self) -> dict:
@@ -232,3 +232,4 @@ class Agent:
 
     async def close(self):
         await self.llm.close()
+

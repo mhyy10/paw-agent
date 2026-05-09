@@ -84,7 +84,7 @@ def list_dir(path: str = ".") -> dict:
     items = []
     try:
         for item in sorted(p.iterdir()):
-            prefix = "📁" if item.is_dir() else "📄"
+            prefix = "[dir]" if item.is_dir() else "[file]"
             size = ""
             if item.is_file():
                 s = item.stat().st_size
@@ -259,3 +259,4 @@ def python_repl(code: str, timeout: int = 30) -> dict:
     finally:
         sys.stdout = old_stdout
         sys.stderr = old_stderr
+
