@@ -330,20 +330,22 @@ class PawInput:
 
         tl, tr, bl, br = '\u256d', '\u256e', '\u2570', '\u256f'
         h, v = '\u2500', '\u2502'
-        w = 60
+        arrow = '\u276f'  # ❯
+        w = 58
         gray = "\033[38;5;245m"
+        accent = "\033[1;38;5;141m"
         reset = "\033[0m"
 
         while True:
             # 上边框
             sys.stdout.write(f"\n{gray}  {tl}{h * w}{tr}{reset}\n")
-            # 左边框 + 提示符
-            sys.stdout.write(f"{gray}  {v}{reset} ")
+            # 左边框 + ❯ 提示符
+            sys.stdout.write(f"{gray}  {v}{reset} {accent}{arrow}{reset} ")
             sys.stdout.flush()
 
             try:
                 result = self.session.prompt(
-                    [('class:prompt', '> ')],
+                    '',  # 空 message，提示符已手动打印
                     bottom_toolbar=get_bottom_toolbar(self.config, self.session_id),
                 )
             except KeyboardInterrupt:
@@ -358,19 +360,14 @@ class PawInput:
             result = result.strip()
 
             if not result:
-                # 空输入: 用 ANSI 上移擦除框线，静默重试
-                # 上移 2 行 (上边框 + 输入行)，清到行尾
-                sys.stdout.write("\033[2A")  # 上移 2 行
-                sys.stdout.write("\033[2K")  # 清当前行
-                sys.stdout.write("\033[1B")  # 下移 1 行
-                sys.stdout.write("\033[2K")  # 清当前行
-                sys.stdout.write("\r")
+                # 空输入: 上移擦除，静默重试
+                sys.stdout.write("\033[2A\033[2K\033[1B\033[2K\r")
                 sys.stdout.flush()
                 continue
 
             # 有输入: 补右边框 + 下边框
-            input_len = len(result) + 2
-            pad = max(1, w - input_len - 1)
+            input_len = len(result) + 3  # "❯ " 的宽度
+            pad = max(1, w - input_len)
             sys.stdout.write(f"{' ' * pad}{gray}{v}{reset}\n")
             sys.stdout.write(f"{gray}  {bl}{h * w}{br}{reset}\n")
             sys.stdout.flush()
