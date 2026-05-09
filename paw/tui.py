@@ -328,7 +328,7 @@ class PawInput:
     def prompt(self, message: str = None) -> str:
         """显示输入提示，返回用户输入"""
         if message is None:
-            message = HTML('<ansigreen><b>你</b></ansigreen> <ansibrightblack>›</ansibrightblack> ')
+            message = HTML('  <ansimagenta bold>> </ansimagenta>')
 
         try:
             result = self.session.prompt(
